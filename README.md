@@ -100,7 +100,8 @@ hernes/
 make install            # = pnpm install
 
 # 1) 検証ゲートを通す（最重要）
-make verify             # lint + typecheck + test。ワークサンプルは緑で出荷済み
+make verify             # lint + typecheck + test + govern。ワークサンプルは緑で出荷済み
+make govern             # 統治ゲート単体（三権分立 / 書かれている→効いている）
 
 # 2) 新機能を始める
 cp -r specs/_template specs/002-your-feature
@@ -163,6 +164,40 @@ stop_conditions:
     - "test and spec conflict"
     - "verification output does not change"
 ```
+
+---
+
+## 統治層（governance / HOTL）
+
+> harness（行政＝実行基盤）だけでは **HITL の高速化止まり**。次は **統治**で「書かれている」を
+> 「効いている」に変え、**HOTL（Human on the Loop）** へ。問いは「AIをどう使うか」ではなく「AI実行をどう統治するか」。
+
+判断を **立法・司法・行政** に分離し、**憲法**が三権を縛る。違反したら `make govern` が CI を落とす（Agent が止まる）。
+
+```text
+憲法 governance/constitution.yaml（改正は人間のみ）
+  └ 立法 governance/rules/*.yaml ─enforced-by→ 司法 governance/checks/ ─→ 行政 make verify/loop
+```
+
+| 三権 | 実体 | 何を保証するか |
+|---|---|---|
+| 憲法 | `governance/constitution.yaml` | 普遍原則（`docs/constitution.md` のミラー） |
+| 立法（rules） | `governance/rules/*.yaml` | 憲法に準拠する具体規範。司法に束縛されて初めて効く |
+| 司法（checks） | `governance/checks/`（決定性＝実装 / 意味＝枠） | 適合を裁く。違反で CI が落ちる |
+| 行政（harness） | `make verify` / `make loop` / `.agents/skills/*` | タスク完了まで実行する |
+
+- **Authority Provenance Graph**: 立法↔司法を接続し ①立法なき司法 ②司法なき立法 ③越境司法 を検知。
+- **Specification Provenance Graph**: feature→requirement→proof を追跡し、リンク切れ・未証明を検知。
+- **SSOT と派生データの分離**: 派生（`governance/graph/`）は gitignore し、判断根拠にしない。
+- **憲法 C1〜C6 を立法 12 ルールで enforced 化**（ユーザー価値・テスト・小さな変更・観測可能・秘密/PII・設計が真実の源 ＋ セキュリティ/DevOps: SA キー禁止・CI が govern 実行・本番承認必須）。
+- **意味(LLM)司法**は評価器実装済み（AGENT_CMD / 既定 skip・`GOVERN_SEMANTIC=1` で有効化）。
+- **AI 実行密度**: `make density` が token × PR / 月で HOTL・HITL を分類。`make govern` も proxy 指標を表示。
+
+```bash
+make govern             # 三権分立の統治ゲート（= pnpm govern）。違反(error)で exit 1
+```
+
+設計・運用・拡張は **[docs/governance.md](docs/governance.md)** / [ADR-0005](docs/decision-log/ADR-0005-governance-three-powers.md)。
 
 ---
 

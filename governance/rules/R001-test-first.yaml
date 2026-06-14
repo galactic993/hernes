@@ -1,0 +1,14 @@
+# 立法（rule） — 憲法に準拠する具体規範。司法(checks)に束縛されて初めて「効いている」。
+id: R001
+title: テストファースト（受け入れ条件は失敗するテストとして表現される）
+constitution: [C2]
+statement: >-
+  新しい挙動は実装前にテストを書く。受け入れ条件(MUST)は機械実行可能なテスト(proof)を持ち、
+  仕様→受け入れ条件→テストの鎖が機械可読に追跡できる（Specification Provenance Graph）。
+severity: error
+status: active
+jurisdiction:
+  include: [specs/**]
+checks:
+  - kind: spec-graph
+    id: spec-proof-integrity

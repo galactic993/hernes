@@ -23,6 +23,10 @@ coverage/
 # Design rendering output (regenerate with scripts/render-design.sh)
 design/rendered/
 
+# Governance derived data (Authority / Specification Provenance Graph)
+# 派生データ＝再生成可能・判断根拠にしない（SSOT と派生データの分離 / R006）
+governance/graph/
+
 # Terraform (commit .terraform.lock.hcl, ignore the rest)
 **/.terraform/
 *.tfstate

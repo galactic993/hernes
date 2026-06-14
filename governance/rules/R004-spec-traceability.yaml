@@ -1,0 +1,13 @@
+id: R004
+title: 仕様トレーサビリティ（要件は受け入れ条件に接続される）
+constitution: [C6]
+statement: >-
+  受け入れ条件が参照する要件は spec に実在し、要件→条件→テストの接続が壊れていないことを機械可読に保証する。
+  接続が切れたら検知できる（Specification Provenance Graph）。
+severity: error
+status: active
+jurisdiction:
+  include: [specs/**]
+checks:
+  - kind: spec-graph
+    id: spec-traceability

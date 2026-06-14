@@ -44,7 +44,8 @@ spec と受け入れ条件が無いまま実装に飛ばない。
 
 ## コマンド
 
-- 検証: `make verify`（= `pnpm verify` = lint + typecheck + test）
+- 検証: `make verify`（= `pnpm verify` = lint + typecheck + test + govern）
+- 統治: `make govern`（三権分立の統治ゲート。立法↔司法↔仕様↔SSOT。違反(error)で exit 1）
 - 個別: `pnpm lint` / `pnpm typecheck` / `pnpm test` / `pnpm --filter <pkg> test`
 - 設計書画像化: `make design DESIGN=<xlsx>`
 - ループ: `make loop FEATURE=<id>`
@@ -53,10 +54,17 @@ spec と受け入れ条件が無いまま実装に飛ばない。
 
 - 受け入れ条件を満たす
 - 関連テストが存在する
-- `make verify` が通る
+- `make verify` が通る（lint + typecheck + test + **govern** = 統治ゲート）
 - 公開挙動が文書化されている
 - 無関係なファイルを変更していない
 - `evidence.md` に実行コマンドと結果がある
+
+## 統治（governance）
+
+- メッセージ・列挙値・バリデーションは `@hernes/shared` に単一定義（直書きは `make govern` で落ちる / R002）。
+- 秘密値をログに出さない（R003）。受け入れ条件(MUST)はテスト(proof)を持ち、要件と接続する（R001/R004）。
+- ルールを追加するなら、対応する司法（`governance/checks/`）も実装し束縛する（書くだけでは error で落ちる）。
+- 派生データ（`governance/graph/`）を判断の根拠にしない。詳細は [docs/governance.md](docs/governance.md)。
 
 ## 禁止事項
 

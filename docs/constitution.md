@@ -3,6 +3,12 @@
 > 全自動ループにおいて「AIが勝手に変えてはいけない価値判断」。
 > 仕様生成・計画・実装・レビューのすべてに効く。最初に確定させる。
 
+> **機械可読版**: この散文は [`governance/constitution.yaml`](../governance/constitution.yaml) に
+> ミラーされ、立法（`governance/rules/`）・司法（`governance/checks/`）・行政（`make verify`）すべてが準拠する。
+> 各原則は「書かれている」だけでなく「効いている」（違反したら `make govern` が CI を落とす）状態を目指す。
+> 統治モデルの全体は [docs/governance.md](governance.md) / [ADR-0005](decision-log/ADR-0005-governance-three-powers.md)。
+> 改正は**人間のみ**可（AI は提案まで）。
+
 ## プロダクト原則
 
 1. **ユーザー価値が最優先**

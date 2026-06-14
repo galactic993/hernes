@@ -1,0 +1,13 @@
+id: R012
+title: 本番デプロイは承認必須（人間の最終統制点）
+constitution: [C5]
+statement: >-
+  本番デプロイ(deploy-production)は GitHub Environment の approval（environment: production）を必須とする。
+  HOTL でも本番反映の最終判断は人間が統制する。
+severity: error
+status: active
+jurisdiction:
+  include: [.github/workflows/deploy-production.yml]
+checks:
+  - kind: deterministic
+    id: production-requires-approval

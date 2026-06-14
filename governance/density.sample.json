@@ -1,0 +1,6 @@
+[
+  { "team": "ai-product-studio", "users": 8, "tokens": 70000000000, "prs": 720 },
+  { "team": "search", "users": 12, "tokens": 6000000000, "prs": 180 },
+  { "team": "billing", "users": 9, "tokens": 4000000000, "prs": 150 },
+  { "team": "growth", "users": 15, "tokens": 9000000000, "prs": 210 }
+]

@@ -1,0 +1,21 @@
+{
+  "name": "@hernes/governance",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "三権分立（立法/司法/行政）による AI 実行の統治ゲート。書かれている→効いている。",
+  "scripts": {
+    "govern": "tsx src/cli.ts",
+    "govern:json": "tsx src/cli.ts --json",
+    "govern:speckit": "tsx src/speckit-cli.ts",
+    "density": "tsx src/density-cli.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@hernes/shared": "workspace:*",
+    "yaml": "^2.4.2"
+  },
+  "devDependencies": {
+    "tsx": "4.19.2"
+  }
+}

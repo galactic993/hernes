@@ -1,0 +1,13 @@
+id: R005
+title: 検証ゲート（行政の実行は機械判定可能なゲートを通る）
+constitution: [C2]
+statement: >-
+  リポジトリは lint + typecheck + test を含む verify ゲートを常に備える。
+  行政(harness) 自体を統治対象とし、ゲートが消えたら検知する。
+severity: error
+status: active
+jurisdiction:
+  include: [package.json, Makefile]
+checks:
+  - kind: deterministic
+    id: verify-gate-present
