@@ -1,0 +1,13 @@
+id: R011
+title: CI が統治ゲート(govern)を実行する（行政を統治に通す）
+constitution: [C2]
+statement: >-
+  CI（.github/workflows/ci.yml）は統治ゲート(govern)を実行し、違反で落ちる。
+  「行政(harness)が統治を通る」ことを CI レベルで担保する。
+severity: error
+status: active
+jurisdiction:
+  include: [.github/workflows/ci.yml]
+checks:
+  - kind: deterministic
+    id: ci-runs-governance

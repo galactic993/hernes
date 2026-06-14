@@ -1,5 +1,5 @@
 import { AuthArea } from './auth/AuthArea'
-import { SearchForm } from './features/prod-quote/SearchForm'
+import { ProdQuoteTop } from './features/prod-quote/ProdQuoteTop'
 
 export function App() {
   return (
@@ -8,7 +8,7 @@ export function App() {
         <h1>制作見積書作成 &lt;トップ画面&gt;</h1>
         <AuthArea />
       </header>
-      <SearchForm />
+      <ProdQuoteTop />
     </main>
   )
 }

@@ -13,6 +13,8 @@ export type AuthContext = {
   userId: string
   sessionId?: string
   orgId?: string
+  // Clerk org_permissions（認可に使用 / SEC-001）。
+  permissions: string[]
 }
 
 type Env = { Variables: { auth: AuthContext } }
@@ -65,10 +67,15 @@ export const clerkAuth = createMiddleware<Env>(async (c, next) => {
     return c.json({ message: 'Forbidden: azp not allowed' }, 403)
   }
 
+  const orgPermissions = Array.isArray(payload.org_permissions)
+    ? payload.org_permissions.filter((p): p is string => typeof p === 'string')
+    : []
+
   c.set('auth', {
     userId: String(payload.sub ?? ''),
     sessionId: typeof payload.sid === 'string' ? payload.sid : undefined,
     orgId: typeof payload.org_id === 'string' ? payload.org_id : undefined,
+    permissions: orgPermissions,
   })
 
   await next()

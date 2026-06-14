@@ -53,7 +53,7 @@ harness を真剣に作ると開発は劇的に速くなる。しかしそれは
 | **行政（harness）** | タスク完了の事前定義に沿って実行する | `make verify` / `make loop` / `.agents/skills/*` |
 
 - **決定性チェック（deterministic）**: 機械判定（実装済み・CI を落とす）。例: メッセージ直書き禁止 / 秘密ログ禁止 / verify ゲート存在 / 仕様完全性（C1・C3・C4）。
-- **意味チェック（semantic）**: LLM で意味判定（[checks/semantic/](../governance/checks/semantic/) に仕様）。配線済みだが**既定 skip**（`GOVERN_SEMANTIC=1` + `AGENT_CMD` で有効化）。安定後に warn→error 昇格。
+- **意味チェック（semantic）**: LLM で意味判定（[checks/semantic/](../governance/checks/semantic/) に仕様）。評価器は AGENT_CMD サブプロセスで**実装済み**だが**既定 skip**（`GOVERN_SEMANTIC=1` + `AGENT_CMD` で有効化・warn）。安定後に error 昇格。
 
 > 汎用 harness（Anthropic / OpenAI / Cursor 等）が触れるのは構造的に**行政まで**。
 > 立法（何が正しいか＝ドメイン依存）と司法（何を裁くか＝フェーズ依存）は**自社で作るしかない**。
@@ -142,6 +142,10 @@ pnpm govern:json   # 機械可読出力（CI/他ツール連携用）
 
 # 意味(LLM)司法を有効化（既定 skip / 非ブロッキング warn）
 GOVERN_SEMANTIC=1 AGENT_CMD='codex exec' pnpm govern
+
+# AI 実行密度（token × PR / 月）で HOTL/HITL を分類（実データは Codex 使用量 + gh から）
+make density FILE=governance/density.sample.json
+scripts/governance/collect-pr-counts.sh 2025-05-01   # author 別 PR 数を gh で集計
 ```
 
 - CI（`.github/workflows/ci.yml`）の "Governance gate" ステップで強制（PR で落ちる）。
@@ -189,19 +193,21 @@ GOVERN_SEMANTIC=1 AGENT_CMD='codex exec' pnpm govern
 **実装済み**:
 
 - 三権分立モデル / 憲法 / Authority・Specification 両 graph / SSOT 分離。
-- 決定性司法 6 種（メッセージ直書き・秘密ログ・verify ゲート・ユーザー価値・分解・観測可能）。
-- 憲法 **C1・C3・C4 の enforced rule 化**（R007/R008/R009 + 仕様完全性チェック、§4.5）。
-- 意味（LLM）司法の**配線**（`user-value-alignment` / `pii-in-logs` を登録・束縛・report 表示。既定 skip）。
-- `SPEC_UNCOVERED_REQUIREMENT` の解消（要件は受け入れ条件に接続。未実装は手動条件で正直に追跡）。
-- **AI 実行密度の proxy 指標**（立法カバレッジ・MUST 要件証明率・手動待ち件数を report 表示）。
+- 立法 **12 ルール** / 司法 **14 チェック**（決定性 6・spec/ssot engine 6・意味 2）。
+- 憲法 **C1〜C6 を enforced rule 化**（R001-R006 + 仕様完全性 R007-R009、§4.5）。
+- **セキュリティ・DevOps 統治**（R010 SA JSON キー禁止 / R011 CI が govern 実行 / R012 本番承認必須）。
+- 意味（LLM）司法の**評価器を本実装**（AGENT_CMD サブプロセス・注入可能・既定 skip／非ブロッキング warn）。
+- **AI 実行密度の実 telemetry**（`make density`：token × PR / 月で HOTL・HITL を分類。`scripts/governance/collect-pr-counts.sh` ＋ Codex 使用量を入力に）。加えて report に proxy 指標を表示。
+- `SPEC_UNCOVERED_REQUIREMENT` の解消＝全要件が受け入れ条件＋テストに接続（**手動条件 0**）。
+- 機能の実装＋証明: 認可ミドルウェア(AC-006) / 取得・検索リポジトリ(AC-007) / 一覧遷移・詳細/得意先モーダル(AC-008/009 component)。
 - CI・`make verify` への配線。
 
-**今後（本質的に継続）**:
+**今後（真の外部依存・継続）**:
 
-- 意味司法の**評価器(LLM)本実装**（AGENT_CMD 経由）と、安定したものの warn→error 昇格。
-- 立法カバレッジのさらなる拡大（ADR・ドメインルールの enforced 化）。
-- 手動条件（FR-001/003/005 等の Phase3 未実装）の実装＋テストによる証明。
-- **AI 実行密度の実 telemetry**（proxy ではなく Codex トークン × PR 数の実測）。
-- セキュリティ・堅牢性・保守品質・DevOps への統治の拡大（プレゼント同様、ここは挑戦中）。
+- 実 DB（Drizzle）配線と「所属センター主管」絞り込み（quots/センターのモデル設計が要る product 判断）。
+- ブラウザ e2e（Playwright / `e2e/`）— 画面間フルフローの担保。
+- 意味司法の `warn → error` 昇格（本番運用データで安定を確認してから）。
+- AI 実行密度の継続観測（自社の実データを `make density` に供給して定点観測）。
+- 保守品質・性能・コストへの統治拡大（プレゼン同様、ここは挑戦中）。
 
 > 「Yesterday is Dead.」— 今日の統治も、明日にはレガシー。変わり続けるために、効かせ続ける。

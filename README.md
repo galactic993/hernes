@@ -189,8 +189,9 @@ stop_conditions:
 - **Authority Provenance Graph**: 立法↔司法を接続し ①立法なき司法 ②司法なき立法 ③越境司法 を検知。
 - **Specification Provenance Graph**: feature→requirement→proof を追跡し、リンク切れ・未証明を検知。
 - **SSOT と派生データの分離**: 派生（`governance/graph/`）は gitignore し、判断根拠にしない。
-- **憲法 C1〜C6 を立法 9 ルールで enforced 化**（ユーザー価値・テスト・小さな変更・観測可能・秘密/PII・設計が真実の源）。意味(LLM)司法は配線済み（既定 skip / `GOVERN_SEMANTIC=1` で有効化）。
-- **AI 実行密度(proxy)** を `make govern` が表示（立法カバレッジ・MUST 要件証明率・手動待ち件数）。
+- **憲法 C1〜C6 を立法 12 ルールで enforced 化**（ユーザー価値・テスト・小さな変更・観測可能・秘密/PII・設計が真実の源 ＋ セキュリティ/DevOps: SA キー禁止・CI が govern 実行・本番承認必須）。
+- **意味(LLM)司法**は評価器実装済み（AGENT_CMD / 既定 skip・`GOVERN_SEMANTIC=1` で有効化）。
+- **AI 実行密度**: `make density` が token × PR / 月で HOTL・HITL を分類。`make govern` も proxy 指標を表示。
 
 ```bash
 make govern             # 三権分立の統治ゲート（= pnpm govern）。違反(error)で exit 1

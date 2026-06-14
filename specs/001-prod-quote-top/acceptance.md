@@ -9,10 +9,10 @@
 | AC-003 | FR-002 / 項目No.1 | MUST | unit | `packages/shared/test/validation.test.ts` |
 | AC-004 | FR-004 / 項目No.16 | MUST | unit | `packages/shared/test/validation.test.ts` |
 | AC-005 | FR-002 / メッセージNo.3,6 | MUST | integration | `apps/backend/test/prod-quotes.test.ts` |
-| AC-006 | SEC-001 / メッセージNo.1 | MUST | 手動/未実装 | — |
-| AC-007 | FR-001 | MUST | 手動/未実装 | — |
-| AC-008 | FR-003 | MUST | 手動/未実装 | — |
-| AC-009 | FR-005 | MUST | 手動/未実装 | — |
+| AC-006 | SEC-001 / メッセージNo.1 | MUST | integration | `apps/backend/test/authz.test.ts` |
+| AC-007 | FR-001 | MUST | integration | `apps/backend/test/prod-quot-repository.test.ts` |
+| AC-008 | FR-003 | MUST | component | `apps/frontend/test/prod-quote-ui.test.tsx` |
+| AC-009 | FR-005 | MUST | component | `apps/frontend/test/prod-quote-ui.test.tsx` |
 | AC-010 | NFR-001 | MUST | integration | `apps/backend/test/prod-quotes.test.ts` |
 
 ## 条件
@@ -66,6 +66,7 @@
 - 個人情報（検索結果の中身）をログ出力したら不合格（SEC / 憲法5）
 - 権限チェックを経ずに他センターの制作見積が取得できたら不合格
 
-## 手動レビュー条件
-- AC-006: 権限 `editorial.prod-quote.create` なしで「アクセス権限がありません」表示・ポータル遷移（認可ミドルウェア実装後にintegrationへ昇格）
-- AC-007 / AC-008 / AC-009: 実DB問い合わせ・遷移・モーダルは Phase3（T011/T012）未実装。実装時に手動→integration へ昇格
+## 補足（実装層と残課題）
+- AC-008 / AC-009 はコンポーネントテスト(component)で証明。**ブラウザ e2e（画面間遷移）は Playwright で後続**（`e2e/`）。
+- AC-007（補足）: データ取得（未着手・検索）は integration 証明済み。「所属センター主管」絞り込みは
+  quots/センターのモデル（本テンプレ未同梱）が必要で Phase3(T011)。実 DB 配線は `drizzleProdQuotRepository` に差し替え。

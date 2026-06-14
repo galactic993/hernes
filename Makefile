@@ -1,7 +1,7 @@
 # Makefile — pnpm への薄いラッパ + 自動ループのエントリポイント。
 # 検証ゲート `make verify` が全AI変更の合否判定器。スタックは pnpm モノレポ。
 
-.PHONY: install verify govern lint typecheck test test-e2e dev \
+.PHONY: install verify govern density lint typecheck test test-e2e dev \
         design loop spec tests evidence help
 
 help:
@@ -10,6 +10,7 @@ help:
 	@echo "検証ゲート:"
 	@echo "  make verify                      lint + typecheck + test + govern (= pnpm verify)"
 	@echo "  make govern                      三権分立の統治ゲート（立法↔司法↔仕様↔SSOT）"
+	@echo "  make density FILE=<records.json> AI実行密度（token×PR/月）でHOTL/HITL分類"
 	@echo "  make lint | typecheck | test"
 	@echo "設計書:"
 	@echo "  make design DESIGN=<xlsx>        Excel設計書をPNG化（視覚理解用）"
@@ -29,6 +30,11 @@ verify:
 # 三権分立の統治ゲート（書かれている→効いている）。違反(error)で exit 1。
 govern:
 	pnpm govern
+
+# AI 実行密度（token使用量 × PR数 / 月・1人あたり）。HOTL/HITL を分類。
+# FILE 省略時はサンプル（governance/density.sample.json）。
+density:
+	@pnpm --filter @hernes/governance run density "$(or $(FILE),governance/density.sample.json)"
 
 lint:
 	pnpm lint

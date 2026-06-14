@@ -26,14 +26,16 @@
 - [x] T007: 検索フォーム（React, 共有スキーマでクライアント検証）
   - Files: `apps/frontend/src/features/prod-quote/*`
 
-## Phase 3: 未実装（次にループを回す対象）
-- [ ] T010: 認可ミドルウェア（editorial.prod-quote.create / AC-006）
-  - Files: `apps/backend/src/middleware/authz.ts`, route 適用
-  - Validation: integration テスト追加 → `make verify`
-  - Done when: 権限なしで「アクセス権限がありません」+ ポータル遷移、テスト緑
-- [ ] T011: prod_quots 検索の実DB問い合わせ（スタブ置換 / FR-001,002）
-  - Files: `apps/backend/src/routes/prod-quotes.ts`, `@hernes/db` クエリ
-- [ ] T012: 得意先選択モーダル UI（FR-004 / EVENT0012〜0016）
+## Phase 3
+- [x] T010: 認可ミドルウェア（editorial.prod-quote.create / AC-006）
+  - Files: `apps/backend/src/middleware/authz.ts`, app.ts で `/api/prod-quotes/manage` に適用
+  - Done: 権限なしで「アクセス権限がありません」+ portal、`apps/backend/test/authz.test.ts` 緑
+- [~] T011: prod_quots のリポジトリ層（FR-001 未着手取得 / FR-002 検索）
+  - Files: `apps/backend/src/repositories/prod-quot-repository.ts`（インメモリ実装 + Drizzle 配線点）
+  - Done: 取得・検索を integration で証明。**残**: 実DB(Drizzle)配線・「所属センター主管」絞り込み（quots/センターのモデル）
+- [x] T012: 得意先選択モーダル UI（FR-004） + 一覧/詳細 UI（FR-003/005）
+  - Files: `apps/frontend/src/features/prod-quote/{SearchResults,DetailModal,CustomerSelectModal,ProdQuoteTop}.tsx`
+  - Done: component テスト緑。**残**: ブラウザ e2e（Playwright / `e2e/`）
 
 ## Phase 4: 証跡
 - [ ] T999: evidence.md 更新、`make verify` が通ることを確認

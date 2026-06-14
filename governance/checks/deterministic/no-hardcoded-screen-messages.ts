@@ -21,7 +21,11 @@ export function run(ctx: CheckContext): Finding[] {
     if (!/\.(ts|tsx)$/.test(file)) continue
     const lines = ctx.readRel(file).split('\n')
     lines.forEach((line, i) => {
-      const matched = CATALOG.filter((msg) => line.includes(msg))
+      // コメント行（//・JSDoc *・/*）は対象外。行末コメントは除去（説明文中のメッセージで誤検知しない）。
+      const trimmed = line.trim()
+      if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) return
+      const code = line.replace(/\/\/.*$/, '')
+      const matched = CATALOG.filter((msg) => code.includes(msg))
       // 包含関係にある短い方を落とし、1 行につき最長一致のみ報告（重複ノイズを抑える）。
       const longest = matched.filter((m) => !matched.some((o) => o !== m && o.includes(m)))
       for (const msg of longest) {
