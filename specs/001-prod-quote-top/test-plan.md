@@ -10,6 +10,10 @@
 | AC-004 | unit | packages/shared/test/validation.test.ts | PASS |
 | AC-005 | integration | apps/backend/test/prod-quotes.test.ts | PASS |
 | AC-006 | manual | — | 未実装（認可ミドルウェア待ち） |
+| AC-007 | manual | — | 未実装（実DB検索 Phase3 T011） |
+| AC-008 | manual | — | 未実装（一覧遷移 UI Phase3） |
+| AC-009 | manual | — | 未実装（詳細モーダル UI Phase3） |
+| AC-010 | integration | apps/backend/test/prod-quotes.test.ts | PASS（観測ログ・PII非出力） |
 
 ## 自動テスト
 - shared: 検索/得意先のバリデーションが設計書通りのメッセージを返す

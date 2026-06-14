@@ -1,0 +1,18 @@
+# SSOT（原典）と派生データの分離 — graph 設計の最重要原則。
+# 自動生成される情報を「判断の根拠」として参照させてはならない。混ぜると統治は必ず崩壊する。
+ssot:
+  # 人が定義・承認した原典。判断根拠として参照可。変更には承認が要る。
+  - governance/constitution.yaml
+  - governance/rules/**
+  - governance/checks/**
+  - governance/ssot.yaml
+  - docs/constitution.md
+  - docs/decision-log/**
+  - packages/shared/**
+  - specs/**/intent.yaml
+  - specs/**/spec.md
+  - specs/**/acceptance.md
+derived:
+  # 機械が自動生成・再生成できるもの。判断根拠にしない（索引/ナビゲーションとしてのみ使う）。
+  - governance/graph/**
+  - design/rendered/**

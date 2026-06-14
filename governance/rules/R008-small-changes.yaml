@@ -1,0 +1,13 @@
+id: R008
+title: 小さく独立した変更へ分解されている（憲法 C3 の実体化）
+constitution: [C3]
+statement: >-
+  すべての feature は tasks.md で作業を小さく独立してレビュー/merge 可能なタスクへ分解する
+  （最低 3 タスク）。大きな書き直しを避け、増分で進める。
+severity: error
+status: active
+jurisdiction:
+  include: [specs/**]
+checks:
+  - kind: spec-graph
+    id: spec-decomposition

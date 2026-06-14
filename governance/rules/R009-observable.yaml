@@ -1,0 +1,13 @@
+id: R009
+title: 観測可能性が宣言されている（憲法 C4 の実体化）
+constitution: [C4]
+statement: >-
+  すべての feature は spec.md に重要フローの観測可能性（ログ/メトリクス/トレース）を非機能要件として宣言する。
+  失敗が診断可能であること。
+severity: error
+status: active
+jurisdiction:
+  include: [specs/**]
+checks:
+  - kind: spec-graph
+    id: spec-observability

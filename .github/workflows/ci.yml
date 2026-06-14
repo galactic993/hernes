@@ -59,6 +59,11 @@ jobs:
       - name: Test
         run: pnpm test
 
+      # 統治ゲート（三権分立 / HOTL）: 立法↔司法↔仕様↔SSOT の整合を機械判定。
+      # 「書かれている」ではなく「効いている」を CI で強制する（違反で落ちる）。
+      - name: Governance gate (三権分立)
+        run: pnpm govern
+
       # build スクリプトを持つワークスペースのみビルド（--if-present）。
       - name: Build (workspaces with a build script)
         run: pnpm -r --if-present build

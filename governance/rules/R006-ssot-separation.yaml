@@ -1,0 +1,13 @@
+id: R006
+title: SSOT と派生データの分離
+constitution: [C6]
+statement: >-
+  自動生成される派生データ（graph 等）を判断の根拠として参照させない。派生データはコミットせず（gitignore）、
+  立法/司法は派生データを authority として参照しない。
+severity: error
+status: active
+jurisdiction:
+  include: ["**"]
+checks:
+  - kind: ssot
+    id: ssot-derived-separation

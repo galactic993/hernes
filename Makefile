@@ -1,14 +1,15 @@
 # Makefile — pnpm への薄いラッパ + 自動ループのエントリポイント。
 # 検証ゲート `make verify` が全AI変更の合否判定器。スタックは pnpm モノレポ。
 
-.PHONY: install verify lint typecheck test test-e2e dev \
+.PHONY: install verify govern lint typecheck test test-e2e dev \
         design loop spec tests evidence help
 
 help:
 	@echo "セットアップ:"
 	@echo "  make install                     pnpm install"
 	@echo "検証ゲート:"
-	@echo "  make verify                      lint + typecheck + test (= pnpm verify)"
+	@echo "  make verify                      lint + typecheck + test + govern (= pnpm verify)"
+	@echo "  make govern                      三権分立の統治ゲート（立法↔司法↔仕様↔SSOT）"
 	@echo "  make lint | typecheck | test"
 	@echo "設計書:"
 	@echo "  make design DESIGN=<xlsx>        Excel設計書をPNG化（視覚理解用）"
@@ -24,6 +25,10 @@ install:
 # --- 検証ゲート（pnpm に委譲） ---
 verify:
 	pnpm verify
+
+# 三権分立の統治ゲート（書かれている→効いている）。違反(error)で exit 1。
+govern:
+	pnpm govern
 
 lint:
 	pnpm lint

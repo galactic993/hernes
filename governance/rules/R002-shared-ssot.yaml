@@ -1,0 +1,13 @@
+id: R002
+title: 表示メッセージ・列挙値・バリデーションは @hernes/shared に単一定義
+constitution: [C6]
+statement: >-
+  画面メッセージ・列挙値・バリデーション規則はコードに直書きせず、@hernes/shared を唯一の出典とする。
+severity: error
+status: active
+jurisdiction:
+  include: [apps/**, packages/**]
+  exclude: [packages/shared/**, "**/test/**", "**/*.test.ts", "**/*.test.tsx"]
+checks:
+  - kind: deterministic
+    id: no-hardcoded-screen-messages

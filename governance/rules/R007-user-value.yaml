@@ -1,0 +1,15 @@
+id: R007
+title: ユーザー価値が articulate されている（憲法 C1 の実体化）
+constitution: [C1]
+statement: >-
+  すべての feature は intent.yaml に user_problem（ユーザーの課題）と desired_outcome（期待成果）を宣言する。
+  社内都合だけでは不十分。深い整合は意味司法(user-value-alignment)で段階的に裁く。
+severity: error
+status: active
+jurisdiction:
+  include: [specs/**]
+checks:
+  - kind: spec-graph
+    id: spec-user-value
+  - kind: semantic
+    id: user-value-alignment

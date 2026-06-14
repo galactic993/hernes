@@ -23,6 +23,10 @@ prodQuotesRoute.post('/search', async (c) => {
   // TODO(impl): @hernes/db の prodQuots を検索する。テンプレではスタブ。
   const items: ProdQuot[] = []
 
+  // NFR-001: 検索フローを観測可能にする。件数のみを構造化ログに出し、
+  // 検索結果レコードの中身（個人情報）はログに出さない（憲法 C5 / 却下条件）。
+  console.info('prod-quote search executed', { count: items.length })
+
   if (items.length === 0) {
     // メッセージ一覧 No.6「制作見積情報検索 - 検索結果なし」（区分: サクセス）
     return c.json({ items, message: SCREEN_MESSAGES.SEARCH_NO_RESULT })
