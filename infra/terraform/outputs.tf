@@ -132,3 +132,27 @@ output "network_subnet_id" {
   description = "Direct VPC egress 用サブネットの ID。"
   value       = one(module.network[*].subnet_id)
 }
+
+# ---------------------------------------------------------------------------
+# 監視（project_id => 各値 のマップ。enable_monitoring=false なら空）
+# ---------------------------------------------------------------------------
+
+output "monitoring_notification_channel_ids" {
+  description = "監視インスタンスごとの通知チャンネル ID 群（project_id => list）。"
+  value       = { for k, m in module.monitoring : k => m.notification_channel_ids }
+}
+
+output "monitoring_dashboard_ids" {
+  description = "監視インスタンスごとの概要ダッシュボード ID（project_id => id）。"
+  value       = { for k, m in module.monitoring : k => m.dashboard_id }
+}
+
+output "monitoring_availability_slo_names" {
+  description = "監視インスタンスごとの可用性 SLO 名（project_id => map）。"
+  value       = { for k, m in module.monitoring : k => m.availability_slo_names }
+}
+
+output "monitoring_budget_ids" {
+  description = "監視インスタンスごとの Billing budget ID（project_id => id / null）。"
+  value       = { for k, m in module.monitoring : k => m.budget_id }
+}

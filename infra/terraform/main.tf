@@ -271,3 +271,71 @@ module "memorystore_production" {
 #     name       = "${var.app_name}-backend-staging"  # = backend-staging 命名規約に合わせる
 #     ...
 #   }
+
+# ---------------------------------------------------------------------------
+# 監視（Cloud Monitoring / Logging / Billing budget）
+#   modules/monitoring が「ログ / バグ・不具合 / SLA・SLO / 料金」をまとめて作る。
+#
+#   - 監視対象は有効な env の長寿命 Cloud Run サービス（backend-staging /
+#     frontend-staging / backend-prod / frontend-prod）。preview の *-pr-<N> は
+#     scale-to-zero で寿命が短いため対象外（var.services に渡さない）。
+#   - 単一 project 運用で重複させないよう、**distinct な project_id ごとに 1
+#     インスタンス**だけ作る（staging と production が同じ project なら 1 つ）。
+# ---------------------------------------------------------------------------
+
+locals {
+  # 有効な env => その project_id。
+  monitored_env_projects = merge(
+    var.enable_staging ? { staging = local.project_id_staging } : {},
+    var.enable_production ? { production = local.project_id_production } : {},
+  )
+
+  # project_id => { env(ラベル用), service_names }。
+  # 同じ project に複数 env が乗る場合は env をまとめ、サービス名も連結する。
+  monitoring_instances = {
+    for proj in distinct(values(local.monitored_env_projects)) :
+    proj => {
+      env = join("-", sort([for e, p in local.monitored_env_projects : e if p == proj]))
+      service_names = flatten([
+        for e, p in local.monitored_env_projects : (
+          e == "staging" ? ["backend-staging", "frontend-staging"] :
+          e == "production" ? ["backend-prod", "frontend-prod"] : []
+        ) if p == proj
+      ])
+    }
+  }
+}
+
+module "monitoring" {
+  source   = "./modules/monitoring"
+  for_each = var.enable_monitoring ? local.monitoring_instances : {}
+
+  project_id = each.key
+  env        = each.value.env
+  region     = var.region
+  labels     = merge(local.common_labels, { env = each.value.env })
+
+  # API 有効化はリポジトリ慣習に合わせ既定 OFF（別管理）。
+  enable_apis               = var.enable_monitoring_apis
+  notification_emails       = var.notification_emails
+  pubsub_notification_topic = var.monitoring_pubsub_topic
+
+  # SLO / アラート / ダッシュボード / ログフィルタの単一ドライバ。
+  services = {
+    for n in each.value.service_names : n => { service_name = n }
+  }
+
+  # 予算は production を含む instance だけ ON。請求アカウント未指定なら OFF（通知のみ）。
+  budget_enable        = var.billing_account != "" && strcontains(each.value.env, "production")
+  billing_account      = var.billing_account
+  budget_currency_code = "JPY"
+  budget_amount_units  = var.monitoring_budget_amount_units
+
+  # uptime は安定ドメインがある env のみ（既定は空 = 何も作らない）。
+  # env が "production-staging" のように複合でも各 env キーのターゲットを拾えるよう、
+  # budget_enable と同じく strcontains で部分一致マージする（exact-match lookup だと
+  # 単一 project × 両 env 運用で複合ラベルにヒットせず無言で何も作られないため）。
+  uptime_targets = merge([
+    for e, t in var.uptime_targets : t if strcontains(each.value.env, e)
+  ]...)
+}
