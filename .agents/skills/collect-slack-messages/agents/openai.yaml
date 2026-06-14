@@ -1,0 +1,4 @@
+interface:
+  display_name: "Collect Slack Messages"
+  short_description: "Slack messages, threads, and files collection"
+  default_prompt: "Use $collect-slack-messages to collect Slack messages, threads, and attached file contents for a specified workspace and topic."

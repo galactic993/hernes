@@ -1,0 +1,28 @@
+{
+  "name": "hernes",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "verify": "pnpm lint && pnpm typecheck && pnpm test",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "echo 'e2e: scaffold Playwright in e2e/ (not wired into verify yet)'",
+    "dev:backend": "pnpm --filter @hernes/backend dev",
+    "dev:frontend": "pnpm --filter @hernes/frontend dev"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "1.9.4",
+    "@types/node": "22.10.1",
+    "typescript": "5.7.2",
+    "vitest": "2.1.8"
+  }
+}

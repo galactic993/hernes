@@ -1,0 +1,51 @@
+id: 001-prod-quote-top
+title: "制作見積書作成<トップ画面>：制作見積情報の検索・一覧・詳細・得意先選択"
+
+design_docs:
+  screen: "../workshop/hts/design-sample/02-02_2_編-制作見積-制作見積書作成トップ_画面設計書_1007.xlsx"
+  table: "../workshop/hts/design-sample/編-テーブル定義書_1012.xlsx"
+
+intent:
+  purpose: "制作部署が、営業からの見積依頼を含む制作見積情報を検索・一覧し、制作見積作成へ進めるようにする"
+  target_users:
+    - "制作部門（所長/チームリーダー/マニュアルエディター/翻訳コーディネーター/システムエンジニア/Webディレクター）"
+    - "システム管理者"
+  user_problem: "未着手の制作見積を一覧・検索して着手対象を選ぶ手段がない"
+  desired_outcome: "条件で検索し、行をたどって制作見積作成・詳細確認へ遷移できる"
+
+success_metrics:
+  - name: "search_completion_rate"
+    target: "検索操作の95%以上が結果表示まで到達"
+
+constraints:
+  tech_stack:
+    monorepo: "pnpm"
+    backend: "Hono (TypeScript)"
+    frontend: "React + Vite (TypeScript)"
+    shared: "@hernes/shared (zod)"
+    database: "PostgreSQL (Drizzle / @hernes/db) — prod_quots ほか"
+  security:
+    - "権限 editorial.prod-quote.create を持たないユーザーはポータルへ遷移（メッセージ一覧No.1）"
+    - "個人情報をログに出さない"
+
+stakeholders:
+  - role: "業務責任者"
+    authority: "受け入れ条件の承認"
+  - role: "セキュリティ担当"
+    authority: "認証・権限・ログ方針の承認"
+
+acceptance_seed:
+  - "ステータスは必須・有効な値のみ（メッセージ: 有効な値を選択してください）"
+  - "見積書Noは11桁以内（11桁以内で入力してください）"
+  - "得意先コードは半角数字・5桁以内（半角数字で入力してください / 5桁以内で入力してください）"
+  - "検索結果が無い場合はサクセスメッセージ（該当する制作見積情報が見つかりません）"
+  - "権限が無い場合はアクセス権限がありませんと表示しポータルへ"
+
+non_goals:
+  - "制作見積登録・更新画面（別設計書 02-02_3）"
+  - "制作見積依頼画面（別設計書 02-02_4）"
+
+risk_tolerance:
+  auto_merge: false
+  auto_deploy_to_staging: true
+  auto_deploy_to_production: false

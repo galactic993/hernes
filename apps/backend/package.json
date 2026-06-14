@@ -1,0 +1,21 @@
+{
+  "name": "@hernes/backend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@hernes/db": "workspace:*",
+    "@hernes/shared": "workspace:*",
+    "@hono/node-server": "1.13.7",
+    "hono": "4.6.13",
+    "jose": "^5.9.6"
+  },
+  "devDependencies": {
+    "tsx": "4.19.2"
+  }
+}

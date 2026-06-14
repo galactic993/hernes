@@ -1,0 +1,41 @@
+# terraform.tfvars.example
+# コピーして terraform.tfvars を作り、値を埋める。
+#   cp terraform.tfvars.example terraform.tfvars
+# terraform.tfvars は .gitignore 済みであることを確認すること（機密ではないが project 固有）。
+
+# ---- 共通 -------------------------------------------------------------------
+app_name = "hernes"
+region   = "asia-northeast1"
+
+# ---- プロジェクト -----------------------------------------------------------
+# 単一 project 運用ならこれだけでよい（dev/preview/staging/prod 全部ここに乗る）。
+project_id = "hernes-dev-123456"
+
+# 環境ごとに project を分ける場合だけ以下を指定（空ならフォールバック）。
+# project_id_staging    = "hernes-staging-123456"
+# project_id_production = "hernes-prod-123456"
+
+# ---- GitHub / WIF -----------------------------------------------------------
+github_repository = "your-org/hernes"
+
+# ---- 環境フラグ -------------------------------------------------------------
+# preview は GitHub Actions が動的に作るので Terraform 管理対象外（フラグ無し）。
+enable_staging    = true
+enable_production = false
+
+# ---- Cloud SQL --------------------------------------------------------------
+db_tier_staging    = "db-custom-1-3840"
+db_tier_production = "db-custom-2-7680"
+db_name            = "hernes"
+# PostgreSQL バージョンは modules/cloud-sql 側で固定（POSTGRES_16）。ここでは指定不要。
+#
+# アプリ DB ユーザのパスワードは機密。tfvars に実値を書かず、環境変数で注入する:
+#   export TF_VAR_db_app_password_staging="$(infisical secrets get DB_APP_PASSWORD ...)"
+#   export TF_VAR_db_app_password_production="..."
+
+# ---- Memorystore (Redis) ----------------------------------------------------
+redis_tier           = "BASIC"
+redis_memory_size_gb = 1
+
+# ---- ネットワーク -----------------------------------------------------------
+network_subnet_cidr = "10.8.0.0/24"

@@ -1,0 +1,120 @@
+# preview-cleanup.yml — PR クローズ時に Preview 環境を破棄する。
+#
+# 削除対象:
+#   - Cloud Run: frontend-pr-<PR> / backend-pr-<PR>
+#   - Neon branch: pr-<PR>
+#   - GCS: gs://<preview bucket>/pr/<PR>/（失敗しても lifecycle 14日に任せる）
+#
+# 安全ガード（厳守）:
+#   - 削除対象名が *-pr-<PR> パターンに一致する場合のみ削除する。
+#   - staging / prod の project / secret には一切アクセスしない（dev/preview のみ）。
+#   - idempotent: 既に無ければ成功扱い。
+#   - set -x 禁止 / secret を echo しない。
+name: Preview Cleanup
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: preview-pr-${{ github.event.number }}
+  cancel-in-progress: false
+
+env:
+  APP_NAME: ${{ vars.APP_NAME }}
+  GCP_REGION: ${{ vars.GCP_REGION }}
+  PR_NUMBER: ${{ github.event.number }}
+
+jobs:
+  cleanup:
+    name: Tear down preview (PR #${{ github.event.number }})
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # cleanup は preview secret のみ参照（Neon API key 等）。staging/prod には触れない。
+      - name: Fetch secrets from Infisical (preview)
+        uses: Infisical/secrets-action@v1
+        with:
+          method: oidc
+          identity-id: ${{ vars.INFISICAL_IDENTITY_ID_PREVIEW }}
+          domain: ${{ vars.INFISICAL_DOMAIN }}
+          project-slug: ${{ vars.INFISICAL_PROJECT_SLUG }}
+          env-slug: preview
+          export-type: env
+
+      - name: Authenticate to Google Cloud (WIF / dev)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER_DEV }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT_DEV }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID_DEV }}
+
+      # --- Cloud Run 削除（*-pr-<PR> パターン一致時のみ） ---
+      - name: Delete Cloud Run preview services
+        run: |
+          for svc in "frontend-pr-${PR_NUMBER}" "backend-pr-${PR_NUMBER}"; do
+            # ガード: 必ず -pr-<PR_NUMBER> で終わる名前だけを対象にする。
+            case "${svc}" in
+              *-pr-"${PR_NUMBER}") : ;;  # OK
+              *)
+                echo "::error::refusing to delete unexpected service name: ${svc}"
+                exit 1
+                ;;
+            esac
+            if gcloud run services describe "${svc}" --region="${GCP_REGION}" >/dev/null 2>&1; then
+              echo "Deleting Cloud Run service ${svc} ..."
+              gcloud run services delete "${svc}" --region="${GCP_REGION}" --quiet
+            else
+              echo "Cloud Run service ${svc} not found; treating as already cleaned."
+            fi
+          done
+
+      # --- Neon branch pr-<PR> 削除 ---
+      - name: Delete Neon branch
+        uses: neondatabase/delete-branch-action@v3
+        with:
+          project_id: ${{ env.NEON_PROJECT_ID }}
+          branch: pr-${{ env.PR_NUMBER }}
+          api_key: ${{ env.NEON_API_KEY }}
+        continue-on-error: true   # 既に無い場合も成功扱い（idempotent）
+
+      # --- GCS prefix 削除（失敗は lifecycle 任せ） ---
+      - name: Delete GCS preview objects
+        continue-on-error: true
+        run: |
+          prefix="pr/${PR_NUMBER}/"
+          bucket="${{ vars.GCS_PREVIEW_BUCKET }}"
+          # ガード: prefix が pr/<PR_NUMBER>/ 形式であることを確認。
+          case "${prefix}" in
+            pr/"${PR_NUMBER}"/) : ;;
+            *) echo "::error::unexpected GCS prefix: ${prefix}"; exit 1 ;;
+          esac
+          echo "Removing gs://${bucket}/${prefix} (best-effort; lifecycle 14d backstop)."
+          gcloud storage rm --recursive "gs://${bucket}/${prefix}" --quiet || \
+            echo "::warning::GCS cleanup failed or already empty; leaving to bucket lifecycle."
+
+      # --- PR コメント更新 ---
+      - name: Update PR comment (teardown done)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ env.PR_NUMBER }}
+          COMMENT_MARKER: "<!-- hernes-preview -->"
+          BODY: |
+            ## Preview torn down (PR #${{ env.PR_NUMBER }})
+
+            Cloud Run services `frontend-pr-${{ env.PR_NUMBER }}` / `backend-pr-${{ env.PR_NUMBER }}`,
+            the Neon branch `pr-${{ env.PR_NUMBER }}`, and GCS prefix `pr/${{ env.PR_NUMBER }}/` have been removed.
+        run: scripts/github/upsert-pr-comment.sh

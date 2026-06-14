@@ -1,0 +1,283 @@
+# deploy-production.yml — 本番デプロイ（手動・承認必須）。
+#
+# トリガ: workflow_dispatch のみ。input `confirm` に "production" を要求する。
+#   environment: production → GitHub Environment の approval（reviewers）必須。
+#
+# Production:
+#   - DB: Cloud SQL for PostgreSQL（prod / 完全分離）。Redis: 有効。
+#   - GCS: production バケット。Secrets: Infisical(production)。GCP は WIF(prod)。
+#   - migration は明示ステップ。破壊的 cleanup は絶対にしない。
+#   - rollback 手順を summary に出力。
+#
+# 規約: set -x 禁止 / secret を echo しない / DATABASE_URL・CLERK_SECRET_KEY をログに出さない。
+name: Deploy Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "production" to deploy'
+        required: true
+        type: string
+      tag:
+        description: 'Optional release tag / git ref to deploy (default: current ref)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  APP_NAME: ${{ vars.APP_NAME }}
+  GCP_REGION: ${{ vars.GCP_REGION }}
+
+jobs:
+  # --- 1) 入力ガード（承認の前に弾く） ---
+  guard:
+    name: Production guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify confirm input
+        run: |
+          if [[ "${{ inputs.confirm }}" != "production" ]]; then
+            echo "::error::confirm input must be exactly 'production' (got a non-matching value). Aborting."
+            exit 1
+          fi
+          echo "Confirm input validated."
+
+  # --- 2) ビルド & デプロイ（environment: production = approval 必須） ---
+  deploy:
+    name: Build, migrate & deploy (production)
+    needs: guard
+    runs-on: ubuntu-latest
+    environment: production   # ここで承認ゲートが入る
+    outputs:
+      backend_url: ${{ steps.backend-url.outputs.url }}
+      frontend_url: ${{ steps.frontend-url.outputs.url }}
+      backend_prev_revision: ${{ steps.prev-revisions.outputs.backend }}
+      frontend_prev_revision: ${{ steps.prev-revisions.outputs.frontend }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # tag 指定があればそれを、無ければ起動 ref を使う。
+          ref: ${{ inputs.tag != '' && inputs.tag || github.ref }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # --- Infisical(production) ---
+      - name: Fetch secrets from Infisical (production)
+        uses: Infisical/secrets-action@v1
+        with:
+          method: oidc
+          identity-id: ${{ vars.INFISICAL_IDENTITY_ID_PRODUCTION }}
+          domain: ${{ vars.INFISICAL_DOMAIN }}
+          project-slug: ${{ vars.INFISICAL_PROJECT_SLUG }}
+          env-slug: production
+          export-type: env
+
+      # --- GCP 認証（WIF / prod） ---
+      - name: Authenticate to Google Cloud (WIF / prod)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER_PRODUCTION }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT_PRODUCTION }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID_PRODUCTION }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${{ vars.ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev" --quiet
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # rollback 用に「現在(=デプロイ前)」のリビジョンを控えておく。
+      - name: Capture current (pre-deploy) revisions
+        id: prev-revisions
+        run: |
+          be="$(gcloud run services describe backend-prod --region="${GCP_REGION}" \
+            --format='value(status.traffic[0].revisionName)' 2>/dev/null || true)"
+          fe="$(gcloud run services describe frontend-prod --region="${GCP_REGION}" \
+            --format='value(status.traffic[0].revisionName)' 2>/dev/null || true)"
+          echo "backend=${be}" >> "$GITHUB_OUTPUT"
+          echo "frontend=${fe}" >> "$GITHUB_OUTPUT"
+          echo "Pre-deploy backend revision: ${be:-<none>}"
+          echo "Pre-deploy frontend revision: ${fe:-<none>}"
+
+      # --- backend build/push ---
+      - name: Resolve backend image tag
+        id: backend-image
+        env:
+          IMAGE: ${{ vars.ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID_PRODUCTION }}/${{ vars.ARTIFACT_REGISTRY_REPOSITORY }}-backend/backend
+        run: |
+          tag="prod-${GITHUB_SHA::12}"
+          echo "image=${IMAGE}:${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/backend/Dockerfile
+          push: true
+          tags: ${{ steps.backend-image.outputs.image }}
+          labels: |
+            app=${{ vars.APP_NAME }}
+            env=production
+            managed-by=github-actions
+            commit-sha=${{ github.sha }}
+          cache-from: type=gha,scope=backend-prod
+          cache-to: type=gha,mode=max,scope=backend-prod
+
+      # --- 明示的な DB migration ステップ（Cloud SQL prod / Auth Proxy 経由） ---
+      - name: Start Cloud SQL Auth Proxy (prod)
+        run: |
+          curl -fsSL -o /usr/local/bin/cloud-sql-proxy \
+            "https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.1/cloud-sql-proxy.linux.amd64"
+          chmod +x /usr/local/bin/cloud-sql-proxy
+          cloud-sql-proxy --port 5432 "${CLOUDSQL_PRODUCTION_INSTANCE}" &
+          echo "PROXY_PID=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 30); do
+            (echo > /dev/tcp/127.0.0.1/5432) >/dev/null 2>&1 && break
+            sleep 1
+          done
+
+      - name: Run DB migrations (Cloud SQL production)
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: scripts/db/migrate.sh
+
+      - name: Stop Cloud SQL Auth Proxy (prod)
+        if: always()
+        run: kill "${PROXY_PID}" 2>/dev/null || true
+
+      # --- backend deploy ---
+      - name: Deploy backend to Cloud Run (production)
+        run: |
+          gcloud run deploy "backend-prod" \
+            --image="${{ steps.backend-image.outputs.image }}" \
+            --region="${GCP_REGION}" \
+            --platform=managed \
+            --allow-unauthenticated \
+            --port=8080 \
+            --add-cloudsql-instances="${CLOUDSQL_PRODUCTION_INSTANCE}" \
+            --network="${VPC_NETWORK}" \
+            --subnet="${VPC_SUBNET}" \
+            --vpc-egress=private-ranges-only \
+            --labels="app=${APP_NAME},env=production,managed-by=github-actions,commit-sha=${GITHUB_SHA}" \
+            --set-env-vars="APP_ENV=production,REDIS_ENABLED=true,REDIS_HOST=${REDIS_HOST},REDIS_PORT=${REDIS_PORT},GCS_BUCKET=${{ vars.GCS_PRODUCTION_BUCKET }},CLERK_JWKS_URL=${CLERK_JWKS_URL},CLERK_ISSUER=${CLERK_ISSUER},ALLOWED_ORIGINS=${ALLOWED_ORIGINS}" \
+            --quiet
+          gcloud run services update "backend-prod" \
+            --region="${GCP_REGION}" \
+            --update-env-vars="^@@^DATABASE_URL=${DATABASE_URL}@@CLERK_SECRET_KEY=${CLERK_SECRET_KEY}@@CLERK_WEBHOOK_SECRET=${CLERK_WEBHOOK_SECRET}" \
+            --quiet
+
+      - name: Get backend URL
+        id: backend-url
+        run: |
+          url="$(gcloud run services describe "backend-prod" \
+            --region="${GCP_REGION}" --format='value(status.url)')"
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+
+      # --- frontend build/push（prod build-args） ---
+      - name: Resolve frontend image tag
+        id: frontend-image
+        env:
+          IMAGE: ${{ vars.ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID_PRODUCTION }}/${{ vars.ARTIFACT_REGISTRY_REPOSITORY }}-frontend/frontend
+        run: |
+          tag="prod-${GITHUB_SHA::12}"
+          echo "image=${IMAGE}:${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/frontend/Dockerfile
+          push: true
+          tags: ${{ steps.frontend-image.outputs.image }}
+          build-args: |
+            VITE_APP_ENV=production
+            VITE_API_BASE_URL=${{ steps.backend-url.outputs.url }}
+            VITE_CLERK_PUBLISHABLE_KEY=${{ env.CLERK_PUBLISHABLE_KEY }}
+          labels: |
+            app=${{ vars.APP_NAME }}
+            env=production
+            managed-by=github-actions
+            commit-sha=${{ github.sha }}
+          cache-from: type=gha,scope=frontend-prod
+          cache-to: type=gha,mode=max,scope=frontend-prod
+
+      - name: Deploy frontend to Cloud Run (production)
+        run: |
+          gcloud run deploy "frontend-prod" \
+            --image="${{ steps.frontend-image.outputs.image }}" \
+            --region="${GCP_REGION}" \
+            --platform=managed \
+            --allow-unauthenticated \
+            --port=8080 \
+            --labels="app=${APP_NAME},env=production,managed-by=github-actions,commit-sha=${GITHUB_SHA}" \
+            --quiet
+
+      - name: Get frontend URL
+        id: frontend-url
+        run: |
+          url="$(gcloud run services describe "frontend-prod" \
+            --region="${GCP_REGION}" --format='value(status.url)')"
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+
+      # --- smoke ---
+      - name: Smoke test backend
+        run: scripts/smoke/backend.sh "${{ steps.backend-url.outputs.url }}"
+
+      - name: Smoke test frontend
+        run: scripts/smoke/frontend.sh "${{ steps.frontend-url.outputs.url }}"
+
+      # --- summary + rollback 手順 ---
+      - name: Summary with rollback instructions
+        if: always()
+        run: |
+          {
+            echo "## Production deploy"
+            echo ""
+            echo "| service | url |"
+            echo "| --- | --- |"
+            echo "| frontend | ${{ steps.frontend-url.outputs.url }} |"
+            echo "| backend  | ${{ steps.backend-url.outputs.url }} |"
+            echo ""
+            echo "- commit: \`${GITHUB_SHA}\`"
+            echo ""
+            echo "### Rollback"
+            echo "直前のリビジョンへ 100% トラフィックを戻す:"
+            echo ""
+            echo '```sh'
+            echo "gcloud run services update-traffic backend-prod \\"
+            echo "  --region=${GCP_REGION} \\"
+            echo "  --to-revisions=${{ steps.prev-revisions.outputs.backend }}=100"
+            echo ""
+            echo "gcloud run services update-traffic frontend-prod \\"
+            echo "  --region=${GCP_REGION} \\"
+            echo "  --to-revisions=${{ steps.prev-revisions.outputs.frontend }}=100"
+            echo '```'
+            echo ""
+            echo "> 注: DB マイグレーションは前方ロールしている。スキーマ変更を伴う場合は"
+            echo "> 互換性を確認し、必要なら別途ダウンマイグレーションを手動実行すること。"
+          } >> "$GITHUB_STEP_SUMMARY"

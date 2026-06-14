@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# Logs / coverage / caches
+*.log
+coverage/
+.vitest/
+.turbo/
+
+# Design rendering output (regenerate with scripts/render-design.sh)
+design/rendered/
+
+# Terraform (commit .terraform.lock.hcl, ignore the rest)
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

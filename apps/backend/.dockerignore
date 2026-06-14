@@ -1,0 +1,39 @@
+# build context は monorepo ルート。backend ビルドに不要なものを除外。
+# （docker build -f apps/backend/Dockerfile . で参照される）
+
+# 依存・成果物
+**/node_modules
+**/dist
+**/.turbo
+**/coverage
+
+# VCS / CI
+.git
+.github
+**/.gitignore
+
+# IDE / OS
+.vscode
+.idea
+**/.DS_Store
+
+# ローカル環境ファイル（機密が入りうる → イメージに焼かない）
+**/.env
+**/.env.*
+
+# 設計ドキュメント
+design
+**/design/rendered
+
+# インフラ・Docker 関連
+infra
+**/*.tf
+**/*.tfvars
+**/Dockerfile
+**/.dockerignore
+
+# テスト・ログ
+**/test
+**/*.test.ts
+**/*.spec.ts
+**/*.log

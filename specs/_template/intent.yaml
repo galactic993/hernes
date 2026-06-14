@@ -1,0 +1,50 @@
+# 機能フォルダのコピー元。新機能は `cp -r specs/_template specs/<NNN-name>` で開始する。
+# 設計書がある場合は design-source.md を埋め、`make spec` で spec を起こす。
+
+id: "NNN-feature-id"
+title: "<一文で。どの画面/機能か>"
+
+# 設計書（Excel）の出典。詳細は design-source.md に書く。
+design_docs:
+  screen: "<画面設計書の .xlsx パス、なければ null>"
+  table: "<テーブル定義書の .xlsx パス、なければ null>"
+
+intent:
+  purpose: "<なぜ作るか。どの課題を解くか>"
+  target_users:
+    - "<ユーザー種別 / 権限種別>"
+  user_problem: "<現状の困りごと>"
+  desired_outcome: "<こうなれば成功、という観測可能な状態>"
+
+success_metrics:
+  - name: "<metric_name>"
+    target: "<測定可能な目標>"
+
+constraints:
+  tech_stack:
+    monorepo: "pnpm"
+    backend: "Hono (TypeScript)"
+    frontend: "React + Vite (TypeScript)"
+    shared: "@hernes/shared (zod)"
+    database: "PostgreSQL (Drizzle / @hernes/db)"
+  security:
+    - "<セキュリティ要件・認可>"
+  compliance:
+    - "個人情報をログに出さない"
+
+stakeholders:
+  - role: "<役割>"
+    authority: "<何を承認する権限を持つか>"
+
+# 受け入れ条件の「種」。観測可能に書く。
+acceptance_seed:
+  - "<ユーザーは ... できる>"
+  - "<不正入力では ... が表示される>"
+
+non_goals:
+  - "<今回やらないこと>"
+
+risk_tolerance:
+  auto_merge: false
+  auto_deploy_to_staging: false
+  auto_deploy_to_production: false
