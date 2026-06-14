@@ -140,3 +140,55 @@ variable "network_subnet_cidr" {
   type        = string
   default     = "10.8.0.0/24"
 }
+
+# ---------------------------------------------------------------------------
+# 監視（Cloud Monitoring / Logging / Billing budget）
+# ---------------------------------------------------------------------------
+
+variable "enable_monitoring" {
+  description = "監視モジュール（ログ/アラート/SLO/予算/ダッシュボード）を作るか。"
+  type        = bool
+  default     = true
+}
+
+variable "enable_monitoring_apis" {
+  description = "監視に必要な API を Terraform で有効化するか。既定 false（API は別管理という既存慣習を尊重。初回構築時のみ true 推奨）。"
+  type        = bool
+  default     = false
+}
+
+variable "notification_emails" {
+  description = "アラート/予算の通知先メールアドレス。1 件につき通知チャンネルを 1 つ作る。"
+  type        = list(string)
+  default     = []
+}
+
+variable "monitoring_pubsub_topic" {
+  description = "アラート fan-out 用の Pub/Sub トピック（projects/<p>/topics/<t>）。空なら無効。"
+  type        = string
+  default     = ""
+}
+
+variable "billing_account" {
+  description = "予算用の **請求アカウント ID**（XXXXXX-XXXXXX-XXXXXX 形式。project_id ではない）。空なら予算を作らない。"
+  type        = string
+  default     = ""
+}
+
+variable "monitoring_budget_amount_units" {
+  description = "月次予算額（JPY・整数）。production を含む監視インスタンスにのみ適用。"
+  type        = number
+  default     = 50000
+}
+
+variable "uptime_targets" {
+  description = <<-EOT
+    env => (key => {host, path}) の外形監視ターゲット。Cloud Run の *.run.app は
+    動的なので、安定したカスタムドメインがある env のみ指定する。既定は空。
+    キーは **素の env 名**（staging / production）。複合ラベル "production-staging"
+    ではなく、main.tf 側が strcontains で部分一致マージして拾う。
+    例: { production = { app = { host = "app.example.com", path = "/healthz" } } }
+  EOT
+  type        = map(map(object({ host = string, path = optional(string, "/healthz") })))
+  default     = {}
+}

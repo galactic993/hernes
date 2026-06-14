@@ -39,3 +39,23 @@ redis_memory_size_gb = 1
 
 # ---- ネットワーク -----------------------------------------------------------
 network_subnet_cidr = "10.8.0.0/24"
+
+# ---- 監視（Cloud Monitoring / Logging / Billing budget）---------------------
+enable_monitoring      = true
+# 初回構築時のみ true にして API を有効化（以降は別管理なら false に戻してよい）。
+enable_monitoring_apis = false
+# アラート・予算の通知先。最低 1 件は設定推奨。
+notification_emails    = ["oncall@example.com"]
+
+# 任意: アラート fan-out 用 Pub/Sub トピック。
+# monitoring_pubsub_topic = "projects/hernes-dev-123456/topics/hernes-alerts"
+
+# 料金: 予算は production を含む監視インスタンスにのみ作られる（通知のみ・支出は止めない）。
+# billing_account は請求アカウント ID（project_id ではない！）。空なら予算なし。
+# billing_account                = "XXXXXX-XXXXXX-XXXXXX"
+# monitoring_budget_amount_units = 50000
+
+# 任意: 外形監視（安定したカスタムドメインがある場合のみ）。
+# uptime_targets = {
+#   production = { app = { host = "app.example.com", path = "/healthz" } }
+# }
