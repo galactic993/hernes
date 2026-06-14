@@ -44,6 +44,28 @@ variable "project_id_production" {
 }
 
 # ---------------------------------------------------------------------------
+# マルチプロジェクト運用時の backend runtime SA（Secret Manager accessor 用）
+#
+# iam モジュールは base/dev project にしか SA を作らない。staging/production を別
+# project に分ける場合、その project 側の backend runtime SA に staging-* /
+# production-* Secret の secretAccessor を付ける必要がある。下記にその SA の email を
+# 渡すと secret-manager モジュールがバインドする。単一 project 運用なら空でよい。
+# 値は GitHub Variables の BACKEND_RUNTIME_SA_STAGING / _PRODUCTION と一致させること。
+# ---------------------------------------------------------------------------
+
+variable "backend_runtime_sa_email_staging" {
+  description = "staging を別 project に分ける場合の staging backend runtime SA email。空なら dev の SA を使う（単一 project）。"
+  type        = string
+  default     = ""
+}
+
+variable "backend_runtime_sa_email_production" {
+  description = "production を別 project に分ける場合の production backend runtime SA email。空なら dev の SA を使う（単一 project）。"
+  type        = string
+  default     = ""
+}
+
+# ---------------------------------------------------------------------------
 # GitHub / Workload Identity Federation
 # ---------------------------------------------------------------------------
 
@@ -99,7 +121,7 @@ variable "db_name" {
 }
 
 # アプリ DB ユーザのパスワード。機密。
-# 実運用では Infisical / Secret Manager 由来の値を TF_VAR_db_app_password_* で渡す。
+# 実運用では GCP Secret Manager 由来の値を TF_VAR_db_app_password_* で渡す。
 # terraform.tfvars に実値を書かない。プレースホルダ default は scaffold 用。
 variable "db_app_password_staging" {
   description = "Cloud SQL staging のアプリユーザパスワード（機密）。TF_VAR_ で注入する。"

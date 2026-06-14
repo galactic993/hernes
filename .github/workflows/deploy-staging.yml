@@ -4,7 +4,7 @@
 #   - DB: Cloud SQL for PostgreSQL（Neon ではない）。
 #   - Redis(Memorystore): 有効（REDIS_ENABLED=true）。Cloud Run からは Direct VPC egress。
 #   - GCS: staging バケット。
-#   - Secrets: Infisical(staging)。GCP は WIF(staging)。
+#   - Secret 値: GCP Secret Manager(staging)。GCP は WIF(staging)。
 #
 # 規約: backend は Hono(TS)。set -x 禁止 / secret を echo しない /
 #       DATABASE_URL・CLERK_SECRET_KEY をログに出さない。
@@ -26,6 +26,17 @@ concurrency:
 env:
   APP_NAME: ${{ vars.APP_NAME }}
   GCP_REGION: ${{ vars.GCP_REGION }}
+  # 非機密の設定値（env-suffixed な vars.* を、ステップが使う素の env 名へマップ）。
+  CLOUDSQL_STAGING_INSTANCE: ${{ vars.CLOUDSQL_STAGING_INSTANCE }}
+  VPC_NETWORK: ${{ vars.VPC_NETWORK }}
+  VPC_SUBNET: ${{ vars.VPC_SUBNET }}
+  REDIS_HOST: ${{ vars.REDIS_HOST_STAGING }}
+  REDIS_PORT: ${{ vars.REDIS_PORT_STAGING }}
+  ALLOWED_ORIGINS: ${{ vars.ALLOWED_ORIGINS_STAGING }}
+  CLERK_JWKS_URL: ${{ vars.CLERK_JWKS_URL_STAGING }}
+  CLERK_ISSUER: ${{ vars.CLERK_ISSUER_STAGING }}
+  CLERK_AUTHORIZED_PARTIES: ${{ vars.CLERK_AUTHORIZED_PARTIES_STAGING }}
+  VITE_CLERK_PUBLISHABLE_KEY: ${{ vars.VITE_CLERK_PUBLISHABLE_KEY_STAGING }}
 
 jobs:
   deploy:
@@ -52,17 +63,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      # --- Infisical(staging) ---
-      - name: Fetch secrets from Infisical (staging)
-        uses: Infisical/secrets-action@v1
-        with:
-          method: oidc
-          identity-id: ${{ vars.INFISICAL_IDENTITY_ID_STAGING }}
-          domain: ${{ vars.INFISICAL_DOMAIN }}
-          project-slug: ${{ vars.INFISICAL_PROJECT_SLUG }}
-          env-slug: staging
-          export-type: env
 
       # --- GCP 認証（WIF / staging） ---
       - name: Authenticate to Google Cloud (WIF / staging)
@@ -106,34 +106,63 @@ jobs:
           cache-from: type=gha,scope=backend-staging
           cache-to: type=gha,mode=max,scope=backend-staging
 
-      # --- DB migration（Cloud SQL staging） ---
-      # 推奨: Cloud SQL Auth Proxy 経由（Public IP を晒さない）。
-      # DATABASE_URL は Infisical(staging) から。値はログへ出さない。
-      - name: Start Cloud SQL Auth Proxy
-        run: |
-          curl -fsSL -o /usr/local/bin/cloud-sql-proxy \
-            "https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.1/cloud-sql-proxy.linux.amd64"
-          chmod +x /usr/local/bin/cloud-sql-proxy
-          # CLOUDSQL_STAGING_INSTANCE = project:region:instance（Infisical or vars）。
-          cloud-sql-proxy --port 5432 "${CLOUDSQL_STAGING_INSTANCE}" &
-          echo "PROXY_PID=$!" >> "$GITHUB_ENV"
-          # proxy が listen するまで待機。
-          for i in $(seq 1 30); do
-            (echo > /dev/tcp/127.0.0.1/5432) >/dev/null 2>&1 && break
-            sleep 1
-          done
-
-      - name: Run DB migrations (Cloud SQL staging)
+      # --- DB migration（Cloud SQL staging）を Cloud Run Job で実行 ---
+      # backend runtime イメージは drizzle-kit を持たないため、migration 専用イメージ
+      # （Dockerfile の migrate ステージ）でマイグレーションする。DATABASE_URL は Job が
+      # Secret Manager から --update-secrets で読むので、GitHub runner には一切降ろさない。
+      - name: Resolve migration image tag
+        id: migrate-image
+        if: ${{ vars.RUN_DB_MIGRATIONS == 'true' }}
         env:
-          # proxy 経由のローカル接続文字列。資格情報は Infisical の値を使う。
-          DATABASE_URL: ${{ env.DATABASE_URL }}
-        run: scripts/db/migrate.sh
+          IMAGE: ${{ vars.ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID_STAGING }}/${{ vars.ARTIFACT_REGISTRY_REPOSITORY }}-backend/migrate
+        run: |
+          tag="staging-${GITHUB_SHA::12}"
+          echo "image=${IMAGE}:${tag}" >> "$GITHUB_OUTPUT"
 
-      - name: Stop Cloud SQL Auth Proxy
-        if: always()
-        run: kill "${PROXY_PID}" 2>/dev/null || true
+      - name: Build & push migration image
+        if: ${{ vars.RUN_DB_MIGRATIONS == 'true' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/backend/Dockerfile
+          target: migrate
+          push: true
+          tags: ${{ steps.migrate-image.outputs.image }}
+          labels: |
+            app=${{ vars.APP_NAME }}
+            env=staging
+            component=migrate
+            managed-by=github-actions
+            commit-sha=${{ github.sha }}
+          cache-from: type=gha,scope=migrate-staging
+          cache-to: type=gha,mode=max,scope=migrate-staging
+
+      # Cloud Run Job: backend runtime SA で実行し、DATABASE_URL を Secret Manager 参照で注入。
+      # private IP の Cloud SQL へは Direct VPC egress + Cloud SQL Auth Proxy 接続で到達する。
+      # vars.RUN_DB_MIGRATIONS=true のときだけ実行（drizzle 未配線の scaffold では既定 off で skip）。
+      - name: Run DB migrations via Cloud Run Job (Cloud SQL staging)
+        if: ${{ vars.RUN_DB_MIGRATIONS == 'true' }}
+        run: |
+          JOB="${APP_NAME}-migrate-staging"
+          gcloud run jobs deploy "${JOB}" \
+            --image="${{ steps.migrate-image.outputs.image }}" \
+            --region="${GCP_REGION}" \
+            --service-account="${{ vars.BACKEND_RUNTIME_SA_STAGING }}" \
+            --set-cloudsql-instances="${CLOUDSQL_STAGING_INSTANCE}" \
+            --network="${VPC_NETWORK}" \
+            --subnet="${VPC_SUBNET}" \
+            --vpc-egress=private-ranges-only \
+            --update-secrets="DATABASE_URL=staging-database-url:latest" \
+            --set-env-vars="APP_ENV=staging" \
+            --max-retries=1 \
+            --task-timeout=600 \
+            --labels="app=${APP_NAME},env=staging,component=migrate,managed-by=github-actions,commit-sha=${GITHUB_SHA}" \
+            --quiet
+          gcloud run jobs execute "${JOB}" --region="${GCP_REGION}" --wait --quiet
 
       # --- backend deploy（Redis 有効 / Cloud SQL 接続 / Direct VPC egress） ---
+      # 機密 env は --update-secrets で Secret Manager を直接参照（runner に値を残さない）。
+      # runtime SA を明示し、その SA が各 secret を読めるようにする。
       - name: Deploy backend to Cloud Run (staging)
         run: |
           gcloud run deploy "backend-staging" \
@@ -142,17 +171,14 @@ jobs:
             --platform=managed \
             --allow-unauthenticated \
             --port=8080 \
+            --service-account="${{ vars.BACKEND_RUNTIME_SA_STAGING }}" \
             --add-cloudsql-instances="${CLOUDSQL_STAGING_INSTANCE}" \
             --network="${VPC_NETWORK}" \
             --subnet="${VPC_SUBNET}" \
             --vpc-egress=private-ranges-only \
             --labels="app=${APP_NAME},env=staging,managed-by=github-actions,commit-sha=${GITHUB_SHA}" \
-            --set-env-vars="APP_ENV=staging,REDIS_ENABLED=true,REDIS_HOST=${REDIS_HOST},REDIS_PORT=${REDIS_PORT},GCS_BUCKET=${{ vars.GCS_STAGING_BUCKET }},MAIL_MODE=mock,PAYMENT_MODE=sandbox,NOTIFICATION_MODE=disabled,CLERK_JWKS_URL=${CLERK_JWKS_URL},CLERK_ISSUER=${CLERK_ISSUER},ALLOWED_ORIGINS=${ALLOWED_ORIGINS}" \
-            --quiet
-          # 機密 env（DATABASE_URL / Clerk secrets）は別ステップで注入。
-          gcloud run services update "backend-staging" \
-            --region="${GCP_REGION}" \
-            --update-env-vars="^@@^DATABASE_URL=${DATABASE_URL}@@CLERK_SECRET_KEY=${CLERK_SECRET_KEY}@@CLERK_WEBHOOK_SECRET=${CLERK_WEBHOOK_SECRET}" \
+            --set-env-vars="^@@^APP_ENV=staging@@REDIS_ENABLED=true@@REDIS_HOST=${REDIS_HOST}@@REDIS_PORT=${REDIS_PORT}@@GCS_BUCKET=${{ vars.GCS_STAGING_BUCKET }}@@MAIL_MODE=mock@@PAYMENT_MODE=sandbox@@NOTIFICATION_MODE=disabled@@CLERK_JWKS_URL=${CLERK_JWKS_URL}@@CLERK_ISSUER=${CLERK_ISSUER}@@CLERK_AUTHORIZED_PARTIES=${CLERK_AUTHORIZED_PARTIES}@@ALLOWED_ORIGINS=${ALLOWED_ORIGINS}" \
+            --update-secrets="DATABASE_URL=staging-database-url:latest,CLERK_SECRET_KEY=staging-clerk-secret-key:latest,CLERK_WEBHOOK_SECRET=staging-clerk-webhook-secret:latest,REDIS_AUTH_STRING=staging-redis-auth-string:latest,APP_SECRET=staging-app-secret:latest" \
             --quiet
 
       - name: Get backend URL
@@ -181,7 +207,7 @@ jobs:
           build-args: |
             VITE_APP_ENV=staging
             VITE_API_BASE_URL=${{ steps.backend-url.outputs.url }}
-            VITE_CLERK_PUBLISHABLE_KEY=${{ env.CLERK_PUBLISHABLE_KEY }}
+            VITE_CLERK_PUBLISHABLE_KEY=${{ env.VITE_CLERK_PUBLISHABLE_KEY }}
           labels: |
             app=${{ vars.APP_NAME }}
             env=staging

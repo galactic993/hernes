@@ -32,7 +32,7 @@ variable "user_name" {
 }
 
 variable "user_password" {
-  description = "Application database user password. Source from Infisical/Secret Manager, never commit a real value."
+  description = "Application database user password. Source from GCP Secret Manager, never commit a real value."
   type        = string
   sensitive   = true
 }

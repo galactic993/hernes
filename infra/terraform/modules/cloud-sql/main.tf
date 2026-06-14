@@ -85,7 +85,7 @@ resource "google_sql_database" "this" {
 }
 
 # Application user. Password is supplied as a (sensitive) variable, expected to
-# originate from Infisical/Secret Manager — never hard-coded.
+# originate from GCP Secret Manager — never hard-coded.
 resource "google_sql_user" "this" {
   project  = var.project_id
   name     = var.user_name

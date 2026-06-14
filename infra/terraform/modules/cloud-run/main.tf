@@ -65,7 +65,7 @@ resource "google_cloud_run_v2_service" "this" {
       }
 
       # Plain (non-secret) environment variables. Secrets must be injected from
-      # Secret Manager / Infisical at deploy time, NOT placed here.
+      # GCP Secret Manager at deploy time, NOT placed here.
       dynamic "env" {
         for_each = var.env
         content {

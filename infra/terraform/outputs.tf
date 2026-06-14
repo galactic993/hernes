@@ -1,6 +1,7 @@
 # outputs.tf
 # GitHub Actions の GitHub Variables 設定や運用で必要になる値を出力する。
-# 機密値（DB パスワード等）は出力しない。Secrets は Infisical が source of truth。
+# 機密値（DB パスワード等）は出力しない。Secret 値の source of truth は
+# GCP Secret Manager（Secret ID は出すが、値は決して出力しない）。
 
 # ---------------------------------------------------------------------------
 # Workload Identity Federation / Deploy SA
@@ -79,6 +80,51 @@ output "gcs_staging_bucket" {
 output "gcs_production_bucket" {
   description = "production 用 GCS バケット名（enable_production=false の場合は null）。"
   value       = one(module.gcs_production[*].bucket_name)
+}
+
+# ---------------------------------------------------------------------------
+# Secret Manager（Secret ID のみ。値は出力しない）
+# Terraform は Secret コンテナ + IAM だけを管理し、値は gcloud secrets versions add
+# で別途投入する。下記は CI / 運用が参照する Secret ID の一覧。
+# ---------------------------------------------------------------------------
+
+output "secret_ids_preview" {
+  description = "preview（dev project）で作る長期 Secret の ID 一覧。per-PR の preview-pr-* は含まない（GitHub Actions が作る）。"
+  value       = concat(module.secret_manager_preview_backend.secret_ids, module.secret_manager_preview_neon.secret_ids)
+}
+
+output "secret_ids_staging" {
+  description = "staging で作る Secret の ID 一覧（enable_staging=false なら空）。"
+  value       = try(module.secret_manager_staging[0].secret_ids, [])
+}
+
+output "secret_ids_production" {
+  description = "production で作る Secret の ID 一覧（enable_production=false なら空）。"
+  value       = try(module.secret_manager_production[0].secret_ids, [])
+}
+
+# CI が BACKEND_RUNTIME_SA_* GitHub Variables にマップするための SA メール（環境別）。
+# 単一 project では 3 つとも dev の SA に一致する。マルチプロジェクトでは staging/production を
+# var.backend_runtime_sa_email_staging / _production で上書きすると、その値（= Secret accessor を
+# 付与した実 SA）が出力され、GitHub Variables と Terraform バインドが一致する。
+output "backend_runtime_sa_dev" {
+  description = "GitHub Variables BACKEND_RUNTIME_SA_DEV に設定する backend runtime SA メール（dev/preview）。"
+  value       = module.iam.backend_runtime_service_account_email
+}
+
+output "backend_runtime_sa_staging" {
+  description = "GitHub Variables BACKEND_RUNTIME_SA_STAGING に設定する SA メール（単一 project なら dev SA、マルチプロジェクトなら override 値）。"
+  value       = var.backend_runtime_sa_email_staging != "" ? var.backend_runtime_sa_email_staging : module.iam.backend_runtime_service_account_email
+}
+
+output "backend_runtime_sa_production" {
+  description = "GitHub Variables BACKEND_RUNTIME_SA_PRODUCTION に設定する SA メール（単一 project なら dev SA、マルチプロジェクトなら override 値）。"
+  value       = var.backend_runtime_sa_email_production != "" ? var.backend_runtime_sa_email_production : module.iam.backend_runtime_service_account_email
+}
+
+output "github_deploy_sa" {
+  description = "GitHub Actions デプロイ SA のメール（preview-pr-* 管理 / migration で Secret Manager を読む）。"
+  value       = module.iam.github_deploy_service_account_email
 }
 
 # ---------------------------------------------------------------------------

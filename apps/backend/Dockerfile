@@ -95,3 +95,30 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
 # deploy 後はパッケージルート直下に src/ が来るため src/index.ts を直接指定する。
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node_modules/.bin/tsx", "src/index.ts"]
+
+# ---------------------------------------------------------------------------
+# Stage 4: migrate — DB マイグレーション専用イメージ（Cloud Run Job として実行）
+#
+# runtime イメージは `pnpm deploy --prod` 成果物で drizzle-kit を持たないため、
+# migration はここで行う。builder 段は workspace 一式（pnpm-workspace.yaml +
+# packages/db のソースと node_modules）を保持しているので、
+# `pnpm --filter @hernes/db exec drizzle-kit migrate`（= scripts/db/migrate.sh）が動く。
+#
+# DATABASE_URL は Cloud Run Job が Secret Manager から --update-secrets で注入する。
+# GitHub Actions runner には一切降ろさない（migration 中も secret を平文で持ち回らない）。
+#
+# build : docker build --target migrate -f apps/backend/Dockerfile .
+# run   : gcloud run jobs deploy ... --update-secrets DATABASE_URL=<env>-database-url:latest
+#
+# NOTE: drizzle-kit は @hernes/db の devDependency 前提。未配線なら migrate.sh が
+#       fail-fast する（scripts/db/migrate.sh のコメント参照）。infra は正しく、
+#       migration の実体配線は別 TODO。
+# ---------------------------------------------------------------------------
+FROM builder AS migrate
+WORKDIR /app
+# migrate.sh は bash 依存（alpine 標準は sh のため明示インストール）。
+RUN apk add --no-cache bash
+# migration スクリプトを取り込む（builder 段は scripts/ を含まないため別途 COPY）。
+COPY scripts/db scripts/db
+# DATABASE_URL は Job 実行時に Secret Manager 参照で注入される（ここでは設定しない）。
+ENTRYPOINT ["bash", "scripts/db/migrate.sh"]

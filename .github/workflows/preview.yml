@@ -4,12 +4,12 @@
 # - backend は Hono(TS)。サービス名 backend-pr-<PR> / frontend-pr-<PR>。
 # - DB は Neon branch pr-<PR>（Preview 専用）。Redis は使わない（REDIS_ENABLED=false）。
 # - GCS は preview バケット、object prefix pr/<PR>/。
-# - Secrets の source of truth = Infisical(preview)。GitHub→Infisical は OIDC。
+# - Secret 値の source of truth = GCP Secret Manager(dev/preview)。
 # - GitHub→GCP は Workload Identity Federation（SA JSON キー禁止）。
 # - CLERK_SECRET_KEY を frontend build に渡さない。DATABASE_URL をログに出さない。
 # - set -x 禁止 / secret を echo しない。
 #
-# 値が未確定の箇所は ${{ vars.* }} / Infisical 出力を参照（コメントで補足）。
+# 非機密の設定値は ${{ vars.* }}、機密値は Secret Manager を参照（コメントで補足）。
 name: Preview
 
 on:
@@ -18,7 +18,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write        # WIF(GCP) と Infisical OIDC に必須
+  id-token: write        # WIF(GCP) に必須
   pull-requests: write   # PR コメント upsert
   issues: write          # issue comments API
 
@@ -31,6 +31,15 @@ env:
   APP_NAME: ${{ vars.APP_NAME }}
   GCP_REGION: ${{ vars.GCP_REGION }}
   PR_NUMBER: ${{ github.event.number }}
+  # Neon の非機密設定（API キーは Secret Manager から別途取得）。
+  NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+  NEON_PARENT_BRANCH: ${{ vars.NEON_PARENT_BRANCH }}
+  # Clerk 公開設定（preview）。いずれも非機密。
+  CLERK_JWKS_URL: ${{ vars.CLERK_JWKS_URL_PREVIEW }}
+  CLERK_ISSUER: ${{ vars.CLERK_ISSUER_PREVIEW }}
+  # azp（authorized parties）チェック用。カンマ区切りの許可 azp 一覧（非機密）。
+  CLERK_AUTHORIZED_PARTIES: ${{ vars.CLERK_AUTHORIZED_PARTIES_PREVIEW }}
+  VITE_CLERK_PUBLISHABLE_KEY: ${{ vars.VITE_CLERK_PUBLISHABLE_KEY_PREVIEW }}
 
 jobs:
   preview:
@@ -74,21 +83,6 @@ jobs:
       - name: Test
         run: pnpm test
 
-      # --- Infisical(preview) で secret を取得 ---
-      # OIDC Machine Identity（Universal Auth は使わない）。
-      # 取得した値は GITHUB_ENV 経由でステップに渡り、ログにはマスクされる。
-      - name: Fetch secrets from Infisical (preview)
-        uses: Infisical/secrets-action@v1
-        with:
-          method: oidc
-          identity-id: ${{ vars.INFISICAL_IDENTITY_ID_PREVIEW }}
-          domain: ${{ vars.INFISICAL_DOMAIN }}
-          project-slug: ${{ vars.INFISICAL_PROJECT_SLUG }}
-          env-slug: preview
-          # CLERK_*, NEON_API_KEY, NEON_PROJECT_ID, NEON_PARENT_BRANCH などを
-          # 環境変数としてエクスポートする。
-          export-type: env
-
       # --- GCP 認証（WIF / dev=preview プロジェクト） ---
       - name: Authenticate to Google Cloud (WIF)
         id: gcp-auth
@@ -102,6 +96,15 @@ jobs:
         with:
           project_id: ${{ vars.GCP_PROJECT_ID_DEV }}
 
+      # --- Neon API キーを Secret Manager から取得 ---
+      # ワークフロー自身が Neon branch を作成するため、この値だけは runner に降ろす。
+      # 取得後は即座にマスクし、GITHUB_ENV 経由でのみ参照する（echo しない）。
+      - name: Read NEON_API_KEY from Secret Manager
+        run: |
+          NEON_API_KEY="$(gcloud secrets versions access latest --secret=preview-neon-api-key)"
+          echo "::add-mask::${NEON_API_KEY}"
+          echo "NEON_API_KEY=${NEON_API_KEY}" >> "$GITHUB_ENV"
+
       # Artifact Registry への docker 認証（asia-northeast1）。
       - name: Configure Docker for Artifact Registry
         run: |
@@ -111,7 +114,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       # --- Neon branch pr-<PR> 作成（既存なら再利用） ---
-      # 親ブランチは Infisical の NEON_PARENT_BRANCH。
+      # 親ブランチは vars.NEON_PARENT_BRANCH（非機密）。API キーは Secret Manager 由来。
       # 出力 db_url（pooled）/ db_url_unpooled は機密。step output 経由で扱い、ログには出さない。
       - name: Create or reuse Neon branch
         id: neon
@@ -121,6 +124,17 @@ jobs:
           parent: ${{ env.NEON_PARENT_BRANCH }}
           branch_name: pr-${{ env.PR_NUMBER }}
           api_key: ${{ env.NEON_API_KEY }}
+
+      # Neon の接続文字列（db_url / db_url_unpooled）を以降の全ステップで確実にマスクする。
+      # （migration ツール等が失敗時に接続文字列をログ出力しても GitHub が redact する。）
+      - name: Mask Neon connection strings
+        env:
+          DB_URL: ${{ steps.neon.outputs.db_url }}
+          DB_URL_UNPOOLED: ${{ steps.neon.outputs.db_url_unpooled }}
+        run: |
+          [[ -n "${DB_URL}" ]] && echo "::add-mask::${DB_URL}"
+          [[ -n "${DB_URL_UNPOOLED}" ]] && echo "::add-mask::${DB_URL_UNPOOLED}"
+          true
 
       # --- backend image build/push ---
       - name: Build & push backend image
@@ -149,17 +163,39 @@ jobs:
           cache-to: type=gha,mode=max,scope=backend-pr
 
       # --- DB migration を Neon branch に対して実行 ---
-      # DATABASE_URL は Neon の pooled 接続。env 経由でのみ渡し、絶対にログへ出さない。
+      # vars.RUN_DB_MIGRATIONS=true のときだけ実行（drizzle 未配線の scaffold では既定 off で skip）。
+      # DATABASE_URL は Neon の pooled 接続（このブランチ自身の URL）。env 経由でのみ渡す。
       - name: Run DB migrations (Neon branch)
+        if: ${{ vars.RUN_DB_MIGRATIONS == 'true' }}
         env:
           DATABASE_URL: ${{ steps.neon.outputs.db_url }}
         run: scripts/db/migrate.sh
 
+      # --- per-PR の DATABASE_URL を Secret Manager に保存し、runtime SA に accessor 付与 ---
+      # backend は Cloud Run の --update-secrets でこの secret を直接参照する（runner に値を残さない）。
+      # 値は Neon step output 由来。argv/echo に出さず、--data-file=- 経由でのみ書き込む。
+      - name: Upsert per-PR DATABASE_URL secret & grant accessor
+        env:
+          DB_URL: ${{ steps.neon.outputs.db_url }}
+        run: |
+          SECRET="preview-pr-${PR_NUMBER}-database-url"
+          echo "::add-mask::${DB_URL}"
+          if gcloud secrets describe "${SECRET}" >/dev/null 2>&1; then
+            printf '%s' "${DB_URL}" | gcloud secrets versions add "${SECRET}" --data-file=-
+          else
+            printf '%s' "${DB_URL}" | gcloud secrets create "${SECRET}" \
+              --replication-policy=automatic --data-file=- \
+              --labels="app=${APP_NAME},env=preview,pr=${PR_NUMBER},managed-by=github-actions"
+          fi
+          gcloud secrets add-iam-policy-binding "${SECRET}" \
+            --member="serviceAccount:${{ vars.BACKEND_RUNTIME_SA_DEV }}" \
+            --role="roles/secretmanager.secretAccessor" --quiet
+
       # --- backend Cloud Run deploy（先に立てて URL を取る） ---
       # ALLOWED_ORIGINS は frontend URL 確定前なので、まず広めに置かず後段で更新する。
+      # 機密 env は --update-secrets で Secret Manager を直接参照（runner に値を残さない）。
+      # runtime SA を明示し、その SA が各 secret を読めるようにする。
       - name: Deploy backend to Cloud Run
-        env:
-          DATABASE_URL: ${{ steps.neon.outputs.db_url }}
         run: |
           gcloud run deploy "backend-pr-${PR_NUMBER}" \
             --image="${{ steps.backend-image.outputs.image }}" \
@@ -167,24 +203,10 @@ jobs:
             --platform=managed \
             --allow-unauthenticated \
             --port=8080 \
+            --service-account="${{ vars.BACKEND_RUNTIME_SA_DEV }}" \
             --labels="app=${APP_NAME},env=preview,pr=${PR_NUMBER},managed-by=github-actions,commit-sha=${GITHUB_SHA}" \
-            --set-env-vars="APP_ENV=preview,REDIS_ENABLED=false,GCS_BUCKET=${{ vars.GCS_PREVIEW_BUCKET }},GCS_PREFIX=pr/${PR_NUMBER}/,MAIL_MODE=mock,PAYMENT_MODE=sandbox,NOTIFICATION_MODE=disabled,CLERK_JWKS_URL=${CLERK_JWKS_URL},CLERK_ISSUER=${CLERK_ISSUER}" \
-            --set-env-vars="^@@^ALLOWED_ORIGINS=" \
-            --update-secrets="" \
-            --quiet
-          # 注: DATABASE_URL / CLERK_SECRET_KEY / CLERK_WEBHOOK_SECRET は
-          #     値をログに出さないため、別ステップで --update-env-vars により注入する。
-
-      # 機密 env は値をコマンドラインに展開しない形で投入（gcloud は引数を素通しするため
-      #   --set-env-vars の右辺に直書きすると runner ログに残り得る → ここでは
-      #   GitHub のマスク機能に依存しつつ、最小限の直書きに留める）。
-      - name: Inject backend secret env (DATABASE_URL / Clerk secrets)
-        env:
-          DATABASE_URL: ${{ steps.neon.outputs.db_url }}
-        run: |
-          gcloud run services update "backend-pr-${PR_NUMBER}" \
-            --region="${GCP_REGION}" \
-            --update-env-vars="^@@^DATABASE_URL=${DATABASE_URL}@@CLERK_SECRET_KEY=${CLERK_SECRET_KEY}@@CLERK_WEBHOOK_SECRET=${CLERK_WEBHOOK_SECRET}" \
+            --set-env-vars="^@@^APP_ENV=preview@@REDIS_ENABLED=false@@GCS_BUCKET=${{ vars.GCS_PREVIEW_BUCKET }}@@GCS_PREFIX=pr/${PR_NUMBER}/@@MAIL_MODE=mock@@PAYMENT_MODE=sandbox@@NOTIFICATION_MODE=disabled@@CLERK_JWKS_URL=${CLERK_JWKS_URL}@@CLERK_ISSUER=${CLERK_ISSUER}@@CLERK_AUTHORIZED_PARTIES=${CLERK_AUTHORIZED_PARTIES}" \
+            --update-secrets="DATABASE_URL=preview-pr-${PR_NUMBER}-database-url:latest,CLERK_SECRET_KEY=preview-clerk-secret-key:latest,CLERK_WEBHOOK_SECRET=preview-clerk-webhook-secret:latest,APP_SECRET=preview-app-secret:latest" \
             --quiet
 
       - name: Get backend URL
@@ -214,7 +236,7 @@ jobs:
           build-args: |
             VITE_APP_ENV=preview
             VITE_API_BASE_URL=${{ steps.backend-url.outputs.url }}
-            VITE_CLERK_PUBLISHABLE_KEY=${{ env.CLERK_PUBLISHABLE_KEY }}
+            VITE_CLERK_PUBLISHABLE_KEY=${{ env.VITE_CLERK_PUBLISHABLE_KEY }}
           labels: |
             app=${{ vars.APP_NAME }}
             env=preview
