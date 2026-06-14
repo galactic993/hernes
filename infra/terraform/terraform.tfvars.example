@@ -29,9 +29,13 @@ db_tier_production = "db-custom-2-7680"
 db_name            = "hernes"
 # PostgreSQL バージョンは modules/cloud-sql 側で固定（POSTGRES_16）。ここでは指定不要。
 #
-# アプリ DB ユーザのパスワードは機密。tfvars に実値を書かず、環境変数で注入する:
-#   export TF_VAR_db_app_password_staging="$(infisical secrets get DB_APP_PASSWORD ...)"
-#   export TF_VAR_db_app_password_production="..."
+# アプリ DB「ユーザパスワード」は Terraform の provisioning 入力（機密）。google_sql_user 作成に
+# 必要なため Terraform が受け取る。これは「Terraform は Secret Manager の runtime 値を扱わない」
+# 規約とは別レイヤ。tfvars に実値を書かず、環境変数で out-of-band に注入する:
+#   read -rs -p "staging DB password: " TF_VAR_db_app_password_staging && export TF_VAR_db_app_password_staging
+#   （パスワードマネージャ CLI でも可: TF_VAR_db_app_password_staging="$(op read 'op://…')"）
+# 注意: これは DB ユーザのパスワードであり runtime の DATABASE_URL とは別物。<env>-database-url は流用しない。
+#   apply 後に private IP + このパスワードから DATABASE_URL を組み立て、<env>-database-url に格納する（README 参照）。
 
 # ---- Memorystore (Redis) ----------------------------------------------------
 redis_tier           = "BASIC"

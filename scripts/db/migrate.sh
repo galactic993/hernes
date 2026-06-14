@@ -17,13 +17,17 @@
 #   - Idempotent: drizzle-kit migrate only applies un-applied migrations, so
 #     re-running is safe (already-applied migrations are skipped).
 #
-# PREREQUISITE (not yet wired in this template):
-#   `pnpm --filter @hernes/db exec drizzle-kit migrate` assumes drizzle-kit is a
-#   devDependency of @hernes/db and a drizzle.config.ts exists in packages/db
-#   pointing at ./src/schema and an ./drizzle migrations dir. At time of writing
-#   packages/db only depends on drizzle-orm. Add drizzle-kit + drizzle.config.ts
-#   before relying on this in CI. Until then this script will fail fast (which is
-#   the desired behaviour — no silent no-op).
+# WIRING (not yet wired in this template):
+#   `drizzle-kit migrate` assumes drizzle-kit is a devDependency of @hernes/db and
+#   a drizzle.config.ts exists (packages/db/drizzle.config.ts) pointing at
+#   ./src/schema and a migrations dir. At time of writing packages/db only depends
+#   on drizzle-orm.
+#   Until drizzle-kit + drizzle.config.ts are wired this script FAILS FAST (exit 1) — it never
+#   reports a successful migration while applying nothing. CI invokes it only when the migration
+#   step is enabled via the `RUN_DB_MIGRATIONS` repo Variable (default off), so an unwired scaffold
+#   simply skips the step (visible in the Actions UI) and deploys stay green. Set RUN_DB_MIGRATIONS
+#   = true only after wiring drizzle-kit + packages/db/drizzle.config.ts (+ migrations).
+#   Once wired, migrations are applied normally and REAL errors fail the run.
 #
 set -euo pipefail
 
@@ -42,13 +46,33 @@ if ! command -v pnpm >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "==> Running Drizzle migrations against the configured database"
-echo "    (DATABASE_URL is set; value intentionally not printed)"
+# Run from repo root so the pnpm workspace filter resolves @hernes/db.
+cd "${REPO_ROOT}"
+
+# --- wiring check: skip (loud, non-silent) until drizzle-kit + config exist ---
+# Locate a drizzle config (preferred: packages/db/drizzle.config.ts).
+DRIZZLE_CONFIG=""
+for cand in "packages/db/drizzle.config.ts" "drizzle.config.ts"; do
+  if [[ -f "${REPO_ROOT}/${cand}" ]]; then
+    DRIZZLE_CONFIG="${cand}"
+    break
+  fi
+done
+
+if ! pnpm --filter @hernes/db exec drizzle-kit --version >/dev/null 2>&1 || [[ -z "${DRIZZLE_CONFIG}" ]]; then
+  # 未配線なら FAIL FAST（no silent no-op）。「migration したつもりで何も適用していない」を防ぐ。
+  # CI では migration step 自体を vars.RUN_DB_MIGRATIONS=true のときだけ実行する設計なので、
+  # 未配線の scaffold では step がそもそも走らず deploy は通る（migration を有効化したら配線必須）。
+  echo "ERROR: drizzle-kit / drizzle.config が未配線のため migration を適用できません。" >&2
+  echo "       @hernes/db に drizzle-kit(devDependency) と drizzle.config.ts（+ migrations）を用意してください。" >&2
+  echo "       CI の migration step は vars.RUN_DB_MIGRATIONS=true のときだけ実行されます。" >&2
+  exit 1
+fi
 
 # --- run ---------------------------------------------------------------------
 # drizzle-kit reads DATABASE_URL from the environment via drizzle.config.ts.
-# Run from repo root so pnpm filter resolves the workspace package.
-cd "${REPO_ROOT}"
-pnpm --filter @hernes/db exec drizzle-kit migrate
+echo "==> Running Drizzle migrations against the configured database"
+echo "    (DATABASE_URL is set; value intentionally not printed)"
+pnpm --filter @hernes/db exec drizzle-kit migrate --config "${DRIZZLE_CONFIG}"
 
 echo "==> Migrations applied successfully"

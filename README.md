@@ -179,7 +179,7 @@ Preview(PR#123)         Staging                 Production
   DB: Neon branch pr-123  Cloud SQL staging       Cloud SQL prod
   GCS: pr/123/ prefix     staging bucket          production bucket
   Redis: 無効             Memorystore staging     Memorystore prod
-  Secrets: Infisical preview / staging / production（OIDC）
+  Secrets: GCP Secret Manager（環境別 secret id / Cloud Run が --update-secrets で参照）
   Auth: Clerk（FE=publishable / BE=Hono+jose でJWKS検証）
 ```
 
@@ -187,10 +187,11 @@ Preview(PR#123)         Staging                 Production
 - CI/CD: `.github/workflows/`（ci / preview / preview-cleanup / deploy-staging / deploy-production / nightly-cleanup）
 - Docker: `apps/{frontend,backend}/Dockerfile`（pnpmモノレポ対応、Cloud Run `8080`）
 - 認証: FE=`@clerk/clerk-react`、BE=`apps/backend/src/middleware/clerk-auth.ts`（jose JWKS / issuer / azp 検証）+ CORS
-- GCP認証は Workload Identity Federation（JSONキー不要）、Secret は Infisical が source of truth。
+- GCP認証は Workload Identity Federation（JSONキー不要）。secret は **GCP Secret Manager** が source of truth で、
+  Cloud Run が `--update-secrets` で直接参照する（値を GitHub runner に持ち回らない / GitHub Secrets に長期 secret を置かない）。
 
-> ⚠️ これは scaffold。実運用には GCP / Neon / Infisical / Clerk のアカウントと、
-> docs の「Required GitHub Variables / Infisical Secrets / 手動セットアップ」が必要。
+> ⚠️ これは scaffold。実運用には GCP / Neon / Clerk のアカウントと、
+> docs の「Required GitHub Variables / Secret Manager secrets / 手動セットアップ」が必要。
 
 ---
 

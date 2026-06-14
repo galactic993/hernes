@@ -7,7 +7,8 @@
 #   - DB: preview は Neon（Terraform 管理外）。staging/prod は Cloud SQL（このコードで作る）。
 #   - Redis: preview は無効。staging 以上のみ Memorystore を作る。
 #   - GCS: preview / staging / production の 3 バケット。preview のみ lifecycle 14 日で自動削除。
-#   - Secrets の source of truth は Infisical。Terraform では Secret 値を扱わない。
+#   - Secrets の source of truth は GCP Secret Manager。Terraform は Secret 値を扱わない
+#     （Secret コンテナ + IAM のみ作る。値は gcloud secrets versions add で別途投入）。
 #
 # 各 module の I/F は modules/ 側担当エージェントの実装に合わせている
 # （location/bucket_name/instance_name/authorized_network など）。
@@ -23,6 +24,18 @@ locals {
     app        = var.app_name
     managed-by = "terraform"
   }
+
+  # Secret Manager の IAM バインドに渡す SA principal（"serviceAccount:<email>" 形式）。
+  backend_runtime_sa_member = "serviceAccount:${module.iam.backend_runtime_service_account_email}"
+  github_deploy_sa_member   = "serviceAccount:${module.iam.github_deploy_service_account_email}"
+
+  # マルチプロジェクト運用では staging/production の backend runtime SA は、その project
+  # 側に存在する別 SA になる（iam モジュールは base/dev project にしか SA を作らない）。
+  # その場合は var.backend_runtime_sa_email_staging / _production に実際の SA email を渡すと、
+  # その SA に staging-* / production-* Secret の accessor が付く。
+  # 単一 project 運用（project_id_staging/production 未指定）なら空のままで dev の SA を使う。
+  staging_backend_runtime_sa_member    = var.backend_runtime_sa_email_staging != "" ? "serviceAccount:${var.backend_runtime_sa_email_staging}" : local.backend_runtime_sa_member
+  production_backend_runtime_sa_member = var.backend_runtime_sa_email_production != "" ? "serviceAccount:${var.backend_runtime_sa_email_production}" : local.backend_runtime_sa_member
 }
 
 # ---------------------------------------------------------------------------
@@ -124,6 +137,114 @@ module "iam" {
 }
 
 # ---------------------------------------------------------------------------
+# Secret Manager（Secret コンテナ + IAM。値は扱わない）
+#
+# Terraform は長期 Secret の「箱」と IAM だけを管理する。値は gcloud secrets
+# versions add で別途投入する（Terraform は Secret 値を扱わない）。
+# per-PR の preview-pr-<N>-database-url は GitHub Actions が作る（Terraform 管理外）。
+#
+# preview-neon-api-key の accessor 除外について:
+#   backend runtime SA には clerk/app の 3 Secret だけ accessor を付ける。
+#   neon-api-key は deploy SA（project admin）が workflow 内で読むだけなので、
+#   backend には付けない。accessor_members は secret_ids の「各」Secret に効くため、
+#   accessor を付ける 3 Secret と、付けない neon-api-key を別 module インスタンスに分割している。
+#   project-scoped の admin は backend 側インスタンスで 1 回だけ付与する。
+# ---------------------------------------------------------------------------
+
+# preview（dev project）: backend が読む 3 Secret。deploy SA に project admin を付与。
+module "secret_manager_preview_backend" {
+  source = "./modules/secret-manager"
+
+  project_id  = var.project_id
+  environment = "preview"
+  region      = var.region
+
+  secret_ids = [
+    "preview-clerk-secret-key",
+    "preview-clerk-webhook-secret",
+    "preview-app-secret",
+  ]
+
+  # backend runtime SA は上記 3 Secret を Cloud Run の --update-secrets で直接読む。
+  accessor_members = [local.backend_runtime_sa_member]
+
+  # dev project は低機微。deploy SA に project-level admin を付けて、workflow が
+  # preview-pr-* の作成/版追加/削除 + per-PR accessor 付与を行えるようにする。
+  admin_member  = local.github_deploy_sa_member
+  admin_project = true
+
+  labels = merge(local.common_labels, { env = "preview" })
+}
+
+# preview（dev project）: neon-api-key。backend には accessor を付けない
+# （deploy SA が project admin 経由で workflow 内で読むだけ）。
+module "secret_manager_preview_neon" {
+  source = "./modules/secret-manager"
+
+  project_id  = var.project_id
+  environment = "preview"
+  region      = var.region
+
+  secret_ids = [
+    "preview-neon-api-key",
+  ]
+
+  # accessor は付けない。admin も backend インスタンス側で付与済みなので付けない。
+
+  labels = merge(local.common_labels, { env = "preview" })
+}
+
+# staging: 5 Secret。backend runtime SA が Cloud Run service（runtime）と
+# Cloud Run Job（migration）の両方で読む。deploy SA に DB secret accessor は付けない
+# （migration は backend runtime SA で動く Cloud Run Job が行い、DATABASE_URL を
+#  Secret Manager 参照で受け取る。GitHub runner は DB secret を読まない）。
+module "secret_manager_staging" {
+  source = "./modules/secret-manager"
+  count  = var.enable_staging ? 1 : 0
+
+  project_id  = local.project_id_staging
+  environment = "staging"
+  region      = var.region
+
+  secret_ids = [
+    "staging-database-url",
+    "staging-clerk-secret-key",
+    "staging-clerk-webhook-secret",
+    "staging-redis-auth-string",
+    "staging-app-secret",
+  ]
+
+  # マルチプロジェクト運用では staging project 側の backend runtime SA を渡す
+  # （未指定なら単一 project とみなし dev の SA を使う）。
+  accessor_members = [local.staging_backend_runtime_sa_member]
+
+  labels = merge(local.common_labels, { env = "staging" })
+}
+
+# production: 5 Secret。backend runtime SA が runtime と migration（Cloud Run Job）で読む。
+# deploy SA に DB secret accessor は付けない（staging と同様）。
+module "secret_manager_production" {
+  source = "./modules/secret-manager"
+  count  = var.enable_production ? 1 : 0
+
+  project_id  = local.project_id_production
+  environment = "production"
+  region      = var.region
+
+  secret_ids = [
+    "production-database-url",
+    "production-clerk-secret-key",
+    "production-clerk-webhook-secret",
+    "production-redis-auth-string",
+    "production-app-secret",
+  ]
+
+  accessor_members = [local.production_backend_runtime_sa_member]
+
+  labels = merge(local.common_labels, { env = "production" })
+}
+
+# ---------------------------------------------------------------------------
 # Workload Identity Federation（GitHub Actions OIDC -> GCP）
 # SA JSON キー禁止。repository claim で制限する（必要なら ref / environment も）。
 # ---------------------------------------------------------------------------
@@ -166,7 +287,7 @@ module "network" {
 # ---------------------------------------------------------------------------
 # Cloud SQL for PostgreSQL（staging / production を完全分離）
 # Preview は Neon を使うのでここでは作らない。
-# user_password は機密。実運用では Infisical/Secret Manager の値を渡す
+# user_password は機密。実運用では GCP Secret Manager の値を渡す
 # （ここではプレースホルダ変数経由。tfvars に実値を書かないこと）。
 # ---------------------------------------------------------------------------
 

@@ -30,6 +30,8 @@ env:
   APP_NAME: ${{ vars.APP_NAME }}
   GCP_REGION: ${{ vars.GCP_REGION }}
   PR_NUMBER: ${{ github.event.number }}
+  # Neon の非機密設定（API キーは Secret Manager から別途取得）。
+  NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
 
 jobs:
   cleanup:
@@ -39,17 +41,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # cleanup は preview secret のみ参照（Neon API key 等）。staging/prod には触れない。
-      - name: Fetch secrets from Infisical (preview)
-        uses: Infisical/secrets-action@v1
-        with:
-          method: oidc
-          identity-id: ${{ vars.INFISICAL_IDENTITY_ID_PREVIEW }}
-          domain: ${{ vars.INFISICAL_DOMAIN }}
-          project-slug: ${{ vars.INFISICAL_PROJECT_SLUG }}
-          env-slug: preview
-          export-type: env
-
+      # cleanup は dev/preview の project / secret のみ参照。staging/prod には触れない。
       - name: Authenticate to Google Cloud (WIF / dev)
         uses: google-github-actions/auth@v2
         with:
@@ -60,6 +52,14 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ vars.GCP_PROJECT_ID_DEV }}
+
+      # --- Neon API キーを Secret Manager から取得 ---
+      # Neon branch 削除にのみ必要。取得後は即マスクし、GITHUB_ENV 経由で参照（echo しない）。
+      - name: Read NEON_API_KEY from Secret Manager
+        run: |
+          NEON_API_KEY="$(gcloud secrets versions access latest --secret=preview-neon-api-key)"
+          echo "::add-mask::${NEON_API_KEY}"
+          echo "NEON_API_KEY=${NEON_API_KEY}" >> "$GITHUB_ENV"
 
       # --- Cloud Run 削除（*-pr-<PR> パターン一致時のみ） ---
       - name: Delete Cloud Run preview services
@@ -80,6 +80,27 @@ jobs:
               echo "Cloud Run service ${svc} not found; treating as already cleaned."
             fi
           done
+
+      # --- per-PR DATABASE_URL secret 削除（name guard / idempotent） ---
+      # サービス削除後に行う。名前が preview-pr-<PR>-database-url 形式のときのみ削除する。
+      - name: Delete per-PR DATABASE_URL secret
+        run: |
+          SECRET="preview-pr-${PR_NUMBER}-database-url"
+          case "${SECRET}" in
+            preview-pr-"${PR_NUMBER}"-database-url) : ;;
+            *) echo "::error::unexpected secret name: ${SECRET}"; exit 1 ;;
+          esac
+          # not-found のみ冪等成功扱い。permission / API エラーは握り潰さず失敗させる
+          # （secret が残置されるのを検知できるように）。
+          if err="$(gcloud secrets describe "${SECRET}" --format='value(name)' 2>&1 >/dev/null)"; then
+            echo "Deleting secret ${SECRET} ..."
+            gcloud secrets delete "${SECRET}" --quiet
+          elif printf '%s' "${err}" | grep -qiE 'NOT_FOUND|was not found|does not exist'; then
+            echo "Secret ${SECRET} not found; treating as already cleaned."
+          else
+            echo "::error::failed to describe secret ${SECRET}: ${err}"
+            exit 1
+          fi
 
       # --- Neon branch pr-<PR> 削除 ---
       - name: Delete Neon branch

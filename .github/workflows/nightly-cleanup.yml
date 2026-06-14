@@ -5,6 +5,7 @@
 #   - env=preview / managed-by=github-actions ラベルの Cloud Run *-pr-* サービスを列挙。
 #   - open PR に対応しない *-pr-<N> サービスを orphan として削除。
 #   - orphan な Neon branch（pr-*）も同様に削除。
+#   - orphan な preview-pr-<N>-database-url secret も同様に削除。
 #
 # 安全ガード（厳守）:
 #   - *-pr-* / pr-* パターンのみを対象。staging/prod の name/branch には一切作用しない。
@@ -29,6 +30,8 @@ concurrency:
 env:
   APP_NAME: ${{ vars.APP_NAME }}
   GCP_REGION: ${{ vars.GCP_REGION }}
+  # Neon の非機密設定（API キーは Secret Manager から別途取得）。
+  NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
 
 jobs:
   cleanup:
@@ -37,16 +40,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Fetch secrets from Infisical (preview)
-        uses: Infisical/secrets-action@v1
-        with:
-          method: oidc
-          identity-id: ${{ vars.INFISICAL_IDENTITY_ID_PREVIEW }}
-          domain: ${{ vars.INFISICAL_DOMAIN }}
-          project-slug: ${{ vars.INFISICAL_PROJECT_SLUG }}
-          env-slug: preview
-          export-type: env
 
       - name: Authenticate to Google Cloud (WIF / dev)
         uses: google-github-actions/auth@v2
@@ -58,6 +51,14 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ vars.GCP_PROJECT_ID_DEV }}
+
+      # --- Neon API キーを Secret Manager から取得 ---
+      # Neon branch 列挙/削除にのみ必要。取得後は即マスクし、GITHUB_ENV 経由で参照（echo しない）。
+      - name: Read NEON_API_KEY from Secret Manager
+        run: |
+          NEON_API_KEY="$(gcloud secrets versions access latest --secret=preview-neon-api-key)"
+          echo "::add-mask::${NEON_API_KEY}"
+          echo "NEON_API_KEY=${NEON_API_KEY}" >> "$GITHUB_ENV"
 
       # open PR 一覧を取得（番号のみ）。gh はランナー同梱。
       - name: List open PR numbers
@@ -76,10 +77,15 @@ jobs:
           OPEN_PRS: ${{ steps.open-prs.outputs.numbers }}
         run: |
           # env=preview & managed-by=github-actions ラベルのサービス名を列挙。
-          mapfile -t services < <(gcloud run services list \
+          # producer の失敗（権限/API）を捕捉するため一旦変数へ取り込んでから mapfile する
+          # （process substitution は producer の exit を握り潰すため）。
+          if ! services_raw="$(gcloud run services list \
             --region="${GCP_REGION}" \
             --filter="metadata.labels.env=preview AND metadata.labels.managed-by=github-actions" \
-            --format='value(metadata.name)')
+            --format='value(metadata.name)')"; then
+            echo "::error::failed to list Cloud Run services"; exit 1
+          fi
+          mapfile -t services <<< "${services_raw}"
 
           for svc in "${services[@]}"; do
             [[ -z "${svc}" ]] && continue
@@ -105,18 +111,23 @@ jobs:
         env:
           OPEN_PRS: ${{ steps.open-prs.outputs.numbers }}
         run: |
-          if ! command -v jq >/dev/null 2>&1; then
-            sudo apt-get update -y && sudo apt-get install -y jq
+          # NEON_API_KEY は Secret Manager 由来。token を argv に出さないため curl ではなく
+          # node の fetch を使い、key は process.env 経由でのみ渡す（ps で見えない）。
+          # NEON_PROJECT_ID は vars.* 由来。値はログへ出さない。
+          # branch 一覧（"id name" 行）を取得。producer(node) の失敗を捕捉するため
+          # 一旦変数へ取り込んでから mapfile する（process substitution は exit を握り潰す）。
+          if ! branches_raw="$(node -e '
+            const key = process.env.NEON_API_KEY, pid = process.env.NEON_PROJECT_ID;
+            fetch(`https://console.neon.tech/api/v2/projects/${pid}/branches`, {
+              headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
+            })
+              .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+              .then((d) => { for (const b of d.branches) console.log(`${b.id} ${b.name}`); })
+              .catch((e) => { console.error(String(e)); process.exit(1); });
+          ')"; then
+            echo "::error::failed to list Neon branches"; exit 1
           fi
-          # NEON_API_KEY / NEON_PROJECT_ID は Infisical(preview) 由来。値はログへ出さない。
-          branches_json="$(curl -fsS \
-            -H "Authorization: Bearer ${NEON_API_KEY}" \
-            -H "Accept: application/json" \
-            "https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches")"
-
-          # name が pr-<digits> のものだけ抽出。
-          mapfile -t branches < <(echo "${branches_json}" \
-            | jq -r '.branches[] | "\(.id) \(.name)"')
+          mapfile -t branches <<< "${branches_raw}"
 
           for entry in "${branches[@]}"; do
             [[ -z "${entry}" ]] && continue
@@ -131,10 +142,51 @@ jobs:
               continue
             fi
             echo "Deleting orphan Neon branch ${bname} (PR #${pr} not open) ..."
-            curl -fsS -X DELETE \
-              -H "Authorization: Bearer ${NEON_API_KEY}" \
-              "https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches/${bid}" \
-              >/dev/null || echo "::warning::failed to delete Neon branch ${bname}; retry next run."
+            # branch id は env 経由で渡す（token と同様 argv に出さない）。
+            NEON_BRANCH_ID="${bid}" node -e '
+              const key = process.env.NEON_API_KEY, pid = process.env.NEON_PROJECT_ID, bid = process.env.NEON_BRANCH_ID;
+              fetch(`https://console.neon.tech/api/v2/projects/${pid}/branches/${bid}`, {
+                method: "DELETE", headers: { Authorization: `Bearer ${key}` },
+              })
+                .then((r) => { if (!r.ok && r.status !== 404) throw new Error("HTTP " + r.status); })
+                .catch((e) => { console.error(String(e)); process.exit(1); });
+            ' || echo "::warning::failed to delete Neon branch ${bname}; retry next run."
+          done
+
+      # --- orphan preview-pr-<N>-database-url secret 削除 ---
+      # managed-by=github-actions / env=preview ラベルの secret を列挙し、
+      # 名前が preview-pr-<digits>-database-url 形式かつ open PR に無いものを削除。
+      - name: Delete orphan per-PR DATABASE_URL secrets
+        env:
+          OPEN_PRS: ${{ steps.open-prs.outputs.numbers }}
+        run: |
+          # name.basename() で短い secret id（projects/.../secrets/<id> の <id>）を得る。
+          # producer の失敗を捕捉するため一旦変数へ取り込んでから mapfile する。
+          if ! secrets_raw="$(gcloud secrets list \
+            --filter="labels.managed-by=github-actions AND labels.env=preview" \
+            --format='value(name.basename())')"; then
+            echo "::error::failed to list Secret Manager secrets"; exit 1
+          fi
+          mapfile -t secrets <<< "${secrets_raw}"
+
+          for secret in "${secrets[@]}"; do
+            [[ -z "${secret}" ]] && continue
+            # フルリソース名で返ってきた場合に備え basename へ正規化。
+            secret="${secret##*/}"
+            # ガード: preview-pr-<digits>-database-url のみ対象。
+            if [[ ! "${secret}" =~ ^preview-pr-([0-9]+)-database-url$ ]]; then
+              echo "skip (not a preview-pr-<N>-database-url secret): ${secret}"
+              continue
+            fi
+            pr="${BASH_REMATCH[1]}"
+            # open PR なら残す。
+            if [[ " ${OPEN_PRS} " == *" ${pr} "* ]]; then
+              echo "keep ${secret} (PR #${pr} is open)"
+              continue
+            fi
+            echo "Deleting orphan secret ${secret} (PR #${pr} is not open) ..."
+            gcloud secrets delete "${secret}" --quiet || \
+              echo "::warning::failed to delete ${secret}; will retry next run."
           done
 
       - name: Summary
@@ -144,6 +196,6 @@ jobs:
             echo "## Nightly cleanup"
             echo ""
             echo "- Open PRs: ${{ steps.open-prs.outputs.numbers }}"
-            echo "- Reaped orphan *-pr-* Cloud Run services and pr-* Neon branches."
+            echo "- Reaped orphan *-pr-* Cloud Run services, pr-* Neon branches, and preview-pr-*-database-url secrets."
             echo "- staging / production resources were never touched."
           } >> "$GITHUB_STEP_SUMMARY"
